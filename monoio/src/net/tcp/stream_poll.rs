@@ -3,9 +3,15 @@
 use std::{io, net::SocketAddr, time::Duration};
 
 #[cfg(unix)]
-use {libc::shutdown, std::os::fd::AsRawFd};
+use {
+    libc::{shutdown, SHUT_WR},
+    std::os::fd::AsRawFd,
+};
 #[cfg(windows)]
-use {std::os::windows::io::AsRawSocket, windows_sys::Win32::Networking::WinSock::shutdown};
+use {
+    std::os::windows::io::AsRawSocket,
+    windows_sys::Win32::Networking::WinSock::{shutdown, SD_SEND as SHUT_WR},
+};
 
 use super::TcpStream;
 use crate::driver::op::Op;
@@ -110,11 +116,7 @@ impl tokio::io::AsyncWrite for TcpStreamPoll {
         let fd = self.0.as_raw_fd();
         #[cfg(windows)]
         let fd = self.0.as_raw_socket() as _;
-        #[cfg(unix)]
-        let how = libc::SHUT_WR;
-        #[cfg(windows)]
-        let how = windows_sys::Win32::Networking::WinSock::SD_SEND;
-        let res = match unsafe { shutdown(fd, how) } {
+        let res = match unsafe { shutdown(fd, SHUT_WR) } {
             -1 => Err(io::Error::last_os_error()),
             _ => Ok(()),
         };

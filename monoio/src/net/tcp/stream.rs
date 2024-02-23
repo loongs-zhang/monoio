@@ -8,13 +8,15 @@ use std::{
 
 #[cfg(unix)]
 use {
-    libc::{AF_INET, AF_INET6, SOCK_STREAM},
+    libc::{shutdown, AF_INET, AF_INET6, SHUT_WR, SOCK_STREAM},
     std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, RawFd},
 };
 #[cfg(windows)]
 use {
     std::os::windows::prelude::{AsRawSocket, FromRawSocket, IntoRawSocket, RawSocket},
-    windows_sys::Win32::Networking::WinSock::{AF_INET, AF_INET6, SOCK_STREAM},
+    windows_sys::Win32::Networking::WinSock::{
+        shutdown, AF_INET, AF_INET6, SD_SEND as SHUT_WR, SOCK_STREAM,
+    },
 };
 
 use crate::{
@@ -350,8 +352,11 @@ impl AsyncWriteRent for TcpStream {
     fn shutdown(&mut self) -> impl Future<Output = std::io::Result<()>> {
         // We could use shutdown op here, which requires kernel 5.11+.
         // However, for simplicity, we just close the socket using direct syscall.
+        #[cfg(unix)]
         let fd = self.as_raw_fd();
-        let res = match unsafe { libc::shutdown(fd, libc::SHUT_WR) } {
+        #[cfg(windows)]
+        let fd = self.as_raw_socket() as _;
+        let res = match unsafe { shutdown(fd, SHUT_WR) } {
             -1 => Err(io::Error::last_os_error()),
             _ => Ok(()),
         };
@@ -403,8 +408,11 @@ impl CancelableAsyncWriteRent for TcpStream {
     fn cancelable_shutdown(&mut self, _c: CancelHandle) -> impl Future<Output = io::Result<()>> {
         // We could use shutdown op here, which requires kernel 5.11+.
         // However, for simplicity, we just close the socket using direct syscall.
+        #[cfg(unix)]
         let fd = self.as_raw_fd();
-        let res = match unsafe { libc::shutdown(fd, libc::SHUT_WR) } {
+        #[cfg(windows)]
+        let fd = self.as_raw_socket() as _;
+        let res = match unsafe { shutdown(fd, SHUT_WR) } {
             -1 => Err(io::Error::last_os_error()),
             _ => Ok(()),
         };

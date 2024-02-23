@@ -19,7 +19,6 @@ mod raw_buf;
 pub use raw_buf::{RawBuf, RawBufVectored};
 
 mod vec_wrapper;
-#[allow(unused_imports)]
 pub(crate) use vec_wrapper::{read_vec_meta, write_vec_meta, IoVecMeta};
 
 mod msg;

@@ -239,7 +239,10 @@ static WSA_RECV_MSG: LazyLock<
         None,
     );
     if r == SOCKET_ERROR || wsa_recv_msg.is_none() {
-        panic!("{}", io::Error::from_raw_os_error(WSAGetLastError()))
+        panic!(
+            "init WSARecvMsg failed with {}",
+            io::Error::from_raw_os_error(WSAGetLastError())
+        )
     } else {
         assert_eq!(dw_bytes, std::mem::size_of::<LPFN_WSARECVMSG>() as _);
         wsa_recv_msg.unwrap()

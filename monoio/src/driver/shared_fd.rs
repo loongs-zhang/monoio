@@ -373,33 +373,32 @@ impl SharedFd {
     /// Try unwrap Rc, then deregister if registered and return rawfd.
     /// Note: this action will consume self and return rawfd without closing it.
     pub(crate) fn try_unwrap(self) -> Result<RawSocket, Self> {
-        // let mut fd = self.inner.fd;
-        // match Rc::try_unwrap(self.inner) {
-        //     Ok(_inner) => {
-        //         let state = unsafe { &*_inner.state.get() };
-        //
-        //         #[allow(irrefutable_let_patterns)]
-        //         if let State::Legacy(idx) = state {
-        //             if CURRENT.is_set() {
-        //                 CURRENT.with(|inner| {
-        //                     match inner {
-        //                         super::Inner::Legacy(inner) => {
-        //                             // deregister it from driver(Poll and slab) and close fd
-        //                             if let Some(idx) = idx {
-        //                                 let _ = super::legacy::LegacyDriver::deregister(
-        //                                     inner, *idx, &mut fd,
-        //                                 );
-        //                             }
-        //                         }
-        //                     }
-        //                 })
-        //             }
-        //         }
-        //         Ok(fd.socket)
-        //     }
-        //     Err(inner) => Err(Self { inner }),
-        // }
-        unimplemented!()
+        let fd = self.inner.fd;
+        match Rc::try_unwrap(self.inner) {
+            Ok(_inner) => {
+                let state = unsafe { &*_inner.state.get() };
+
+                #[allow(irrefutable_let_patterns)]
+                if let State::Legacy(idx) = state {
+                    if CURRENT.is_set() {
+                        CURRENT.with(|inner| {
+                            match inner {
+                                super::Inner::Legacy(inner) => {
+                                    // deregister it from driver(Poll and slab) and close fd
+                                    if let Some(idx) = idx {
+                                        let _ = super::legacy::LegacyDriver::deregister(
+                                            inner, *idx, fd,
+                                        );
+                                    }
+                                }
+                            }
+                        })
+                    }
+                }
+                Ok(fd)
+            }
+            Err(inner) => Err(Self { inner }),
+        }
     }
 
     #[allow(unused)]

@@ -187,7 +187,7 @@ where
     }
 }
 
-#[cfg(all(test, not(windows)))]
+#[cfg(test)]
 mod tests {
     use super::DefaultThreadPool;
 

@@ -1,3 +1,4 @@
+#![cfg(unix)]
 use std::io::prelude::*;
 #[cfg(unix)]
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};

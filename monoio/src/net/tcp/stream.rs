@@ -100,19 +100,12 @@ impl TcpStream {
         Self::connect_addr(addr).await
     }
 
-    #[cfg(unix)]
     /// Establish a connection to the specified `addr`.
     pub async fn connect_addr(addr: SocketAddr) -> io::Result<Self> {
         const DEFAULT_OPTS: TcpConnectOpts = TcpConnectOpts {
             tcp_fast_open: false,
         };
         Self::connect_addr_with_config(addr, &DEFAULT_OPTS).await
-    }
-
-    /// Establish a connection to the specified `addr`.
-    #[cfg(windows)]
-    pub async fn connect_addr(_addr: SocketAddr) -> io::Result<Self> {
-        unimplemented!()
     }
 
     /// Establish a connection to the specified `addr` with given config.
@@ -354,7 +347,6 @@ impl AsyncWriteRent for TcpStream {
         Ok(())
     }
 
-    #[cfg(unix)]
     fn shutdown(&mut self) -> impl Future<Output = std::io::Result<()>> {
         // We could use shutdown op here, which requires kernel 5.11+.
         // However, for simplicity, we just close the socket using direct syscall.
@@ -364,11 +356,6 @@ impl AsyncWriteRent for TcpStream {
             _ => Ok(()),
         };
         async move { res }
-    }
-
-    #[cfg(windows)]
-    async fn shutdown(&mut self) -> std::io::Result<()> {
-        unimplemented!()
     }
 }
 
@@ -413,7 +400,6 @@ impl CancelableAsyncWriteRent for TcpStream {
         Ok(())
     }
 
-    #[cfg(unix)]
     fn cancelable_shutdown(&mut self, _c: CancelHandle) -> impl Future<Output = io::Result<()>> {
         // We could use shutdown op here, which requires kernel 5.11+.
         // However, for simplicity, we just close the socket using direct syscall.
@@ -423,11 +409,6 @@ impl CancelableAsyncWriteRent for TcpStream {
             _ => Ok(()),
         };
         async move { res }
-    }
-
-    #[cfg(windows)]
-    async fn cancelable_shutdown(&mut self, _c: CancelHandle) -> io::Result<()> {
-        unimplemented!()
     }
 }
 
@@ -582,8 +563,11 @@ impl StreamMeta {
     /// When operating files, we should use RawHandle;
     /// When operating sockets, we should use RawSocket;
     #[cfg(windows)]
-    fn new(_: RawSocket) -> Self {
-        unimplemented!()
+    fn new(fd: RawSocket) -> Self {
+        Self {
+            socket: unsafe { Some(socket2::Socket::from_raw_socket(fd)) },
+            meta: Default::default(),
+        }
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -670,9 +654,10 @@ impl StreamMeta {
 
 impl Drop for StreamMeta {
     fn drop(&mut self) {
+        let socket = self.socket.take().unwrap();
         #[cfg(unix)]
-        self.socket.take().unwrap().into_raw_fd();
+        socket.into_raw_fd();
         #[cfg(windows)]
-        unimplemented!()
+        socket.into_raw_socket();
     }
 }

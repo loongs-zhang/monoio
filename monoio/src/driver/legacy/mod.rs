@@ -192,8 +192,10 @@ impl LegacyDriver {
             Event::all(token)
         } else if interest.is_readable() {
             Event::readable(token)
-        } else {
+        } else if interest.is_writable() {
             Event::writable(token)
+        } else {
+            Event::none(token)
         };
         let mode = if inner.poll.supports_edge() {
             PollMode::Edge
@@ -201,7 +203,7 @@ impl LegacyDriver {
             PollMode::Level
         };
 
-        match inner.poll.modify_with_mode(socket, event, mode) {
+        match inner.poll.add_with_mode(socket, event, mode) {
             Ok(_) => Ok(token),
             Err(e) => {
                 inner.io_dispatch.remove(token);

@@ -253,7 +253,6 @@ impl SharedFd {
             State::Legacy(Some(reg?))
         };
 
-        #[allow(unreachable_code)]
         Ok(SharedFd {
             inner: Rc::new(Inner {
                 fd,

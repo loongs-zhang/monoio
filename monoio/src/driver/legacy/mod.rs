@@ -8,6 +8,15 @@ use std::{
     time::Duration,
 };
 
+#[cfg(unix)]
+use mio::{event::Source, Events};
+use mio::{Interest, Token};
+#[cfg(windows)]
+use {
+    polling::{Event, PollMode, Poller},
+    std::os::windows::io::RawSocket,
+};
+
 use super::{
     op::{CompletionMeta, Op, OpAble},
     ready::{self, Ready},
@@ -15,10 +24,6 @@ use super::{
     Driver, Inner, CURRENT,
 };
 use crate::utils::slab::Slab;
-
-#[allow(missing_docs, unreachable_pub, dead_code, unused_imports)]
-#[cfg(windows)]
-pub(super) mod iocp;
 
 #[cfg(feature = "sync")]
 mod waker;
@@ -28,13 +33,13 @@ pub(crate) use waker::UnparkHandle;
 pub(crate) struct LegacyInner {
     pub(crate) io_dispatch: Slab<ScheduledIo>,
     #[cfg(unix)]
-    events: mio::Events,
+    events: Events,
     #[cfg(unix)]
     poll: mio::Poll,
     #[cfg(windows)]
-    events: iocp::Events,
+    events: Vec<Event>,
     #[cfg(windows)]
-    poll: iocp::Poller,
+    poll: std::sync::Arc<Poller>,
 
     #[cfg(feature = "sync")]
     shared_waker: std::sync::Arc<waker::EventWaker>,
@@ -55,7 +60,7 @@ pub struct LegacyDriver {
 }
 
 #[cfg(feature = "sync")]
-const TOKEN_WAKEUP: mio::Token = mio::Token(1 << 31);
+const TOKEN_WAKEUP: Token = Token(1 << 31);
 
 #[allow(dead_code)]
 impl LegacyDriver {
@@ -69,18 +74,13 @@ impl LegacyDriver {
         #[cfg(unix)]
         let poll = mio::Poll::new()?;
         #[cfg(windows)]
-        let poll = iocp::Poller::new()?;
+        let poll = std::sync::Arc::new(Poller::new()?);
 
         #[cfg(all(unix, feature = "sync"))]
-        let shared_waker = std::sync::Arc::new(waker::EventWaker::new(mio::Waker::new(
-            poll.registry(),
-            TOKEN_WAKEUP,
-        )?));
+        let shared_waker =
+            std::sync::Arc::new(waker::EventWaker::new(poll.registry(), TOKEN_WAKEUP)?);
         #[cfg(all(windows, feature = "sync"))]
-        let shared_waker = std::sync::Arc::new(waker::EventWaker::new(iocp::Waker::new(
-            &poll,
-            TOKEN_WAKEUP,
-        )?));
+        let shared_waker = std::sync::Arc::new(waker::EventWaker::new(poll.clone(), TOKEN_WAKEUP)?);
         #[cfg(feature = "sync")]
         let (waker_sender, waker_receiver) = flume::unbounded::<std::task::Waker>();
         #[cfg(feature = "sync")]
@@ -89,11 +89,11 @@ impl LegacyDriver {
         let inner = LegacyInner {
             io_dispatch: Slab::new(),
             #[cfg(unix)]
-            events: mio::Events::with_capacity(entries as usize),
+            events: Events::with_capacity(entries as usize),
             #[cfg(unix)]
             poll,
             #[cfg(windows)]
-            events: iocp::Events::with_capacity(entries as usize),
+            events: Vec::with_capacity(entries as usize),
             #[cfg(windows)]
             poll,
             #[cfg(feature = "sync")]
@@ -152,25 +152,29 @@ impl LegacyDriver {
 
         // here we borrow 2 mut self, but its safe.
         let events = unsafe { &mut (*self.inner.get()).events };
-        match inner.poll.poll(events, timeout) {
+        #[cfg(unix)]
+        let result = inner.poll.poll(events, timeout);
+        #[cfg(windows)]
+        let result = inner.poll.wait(events, timeout);
+        match result {
             Ok(_) => {}
             Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(e) => return Err(e),
         }
-        #[cfg(unix)]
         let iter = events.iter();
-        #[cfg(windows)]
-        let iter = events.events.iter();
         for event in iter {
+            #[cfg(unix)]
             let token = event.token();
+            #[cfg(windows)]
+            let token = Token(event.key);
 
             #[cfg(feature = "sync")]
             if token != TOKEN_WAKEUP {
-                inner.dispatch(token, Ready::from_mio(event));
+                inner.dispatch(token, Ready::from(event));
             }
 
             #[cfg(not(feature = "sync"))]
-            inner.dispatch(token, Ready::from_mio(event));
+            inner.dispatch(token, Ready::from(event));
         }
         Ok(())
     }
@@ -178,14 +182,26 @@ impl LegacyDriver {
     #[cfg(windows)]
     pub(crate) fn register(
         this: &Rc<UnsafeCell<LegacyInner>>,
-        state: &mut iocp::SocketState,
-        interest: mio::Interest,
+        socket: RawSocket,
+        interest: Interest,
     ) -> io::Result<usize> {
         let inner = unsafe { &mut *this.get() };
         let io = ScheduledIo::default();
         let token = inner.io_dispatch.insert(io);
+        let event = if interest.is_readable() && interest.is_writable() {
+            Event::all(token)
+        } else if interest.is_readable() {
+            Event::readable(token)
+        } else {
+            Event::writable(token)
+        };
+        let mode = if inner.poll.supports_edge() {
+            PollMode::Edge
+        } else {
+            PollMode::Level
+        };
 
-        match inner.poll.register(state, mio::Token(token), interest) {
+        match inner.poll.modify_with_mode(socket, event, mode) {
             Ok(_) => Ok(token),
             Err(e) => {
                 inner.io_dispatch.remove(token);
@@ -198,12 +214,12 @@ impl LegacyDriver {
     pub(crate) fn deregister(
         this: &Rc<UnsafeCell<LegacyInner>>,
         token: usize,
-        state: &mut iocp::SocketState,
+        socket: RawSocket,
     ) -> io::Result<()> {
         let inner = unsafe { &mut *this.get() };
 
         // try to deregister fd first, on success we will remove it from slab.
-        match inner.poll.deregister(state) {
+        match inner.poll.delete(socket) {
             Ok(_) => {
                 inner.io_dispatch.remove(token);
                 Ok(())
@@ -215,14 +231,14 @@ impl LegacyDriver {
     #[cfg(unix)]
     pub(crate) fn register(
         this: &Rc<UnsafeCell<LegacyInner>>,
-        source: &mut impl mio::event::Source,
-        interest: mio::Interest,
+        source: &mut impl Source,
+        interest: Interest,
     ) -> io::Result<usize> {
         let inner = unsafe { &mut *this.get() };
         let token = inner.io_dispatch.insert(ScheduledIo::new());
 
         let registry = inner.poll.registry();
-        match registry.register(source, mio::Token(token), interest) {
+        match registry.register(source, Token(token), interest) {
             Ok(_) => Ok(token),
             Err(e) => {
                 inner.io_dispatch.remove(token);
@@ -235,7 +251,7 @@ impl LegacyDriver {
     pub(crate) fn deregister(
         this: &Rc<UnsafeCell<LegacyInner>>,
         token: usize,
-        source: &mut impl mio::event::Source,
+        source: &mut impl Source,
     ) -> io::Result<()> {
         let inner = unsafe { &mut *this.get() };
 
@@ -251,7 +267,7 @@ impl LegacyDriver {
 }
 
 impl LegacyInner {
-    fn dispatch(&mut self, token: mio::Token, ready: Ready) {
+    fn dispatch(&mut self, token: Token, ready: Ready) {
         let mut sio = match self.io_dispatch.get(token.0) {
             Some(io) => io,
             None => {
@@ -324,7 +340,7 @@ impl LegacyInner {
             ready::Direction::Read => Ready::READ_CANCELED,
             ready::Direction::Write => Ready::WRITE_CANCELED,
         };
-        inner.dispatch(mio::Token(index), ready);
+        inner.dispatch(Token(index), ready);
     }
 
     pub(crate) fn submit_with_data<T>(

@@ -6,7 +6,7 @@ use io_uring::{opcode, types};
 use windows_sys::Win32::{
     Foundation::TRUE,
     Networking::WinSock::{WSAGetLastError, WSASend, SOCKET_ERROR},
-    Storage::FileSystem::{SetFilePointer, WriteFile, FILE_CURRENT, INVALID_SET_FILE_POINTER},
+    Storage::FileSystem::{SetFilePointer, WriteFile, FILE_BEGIN, INVALID_SET_FILE_POINTER},
 };
 #[cfg(all(unix, any(feature = "legacy", feature = "poll-io")))]
 use {crate::syscall_u32, std::os::unix::prelude::AsRawFd};
@@ -95,7 +95,7 @@ impl<T: IoBuf> OpAble for Write<T> {
         let ret = unsafe {
             // see https://learn.microsoft.com/zh-cn/windows/win32/api/fileapi/nf-fileapi-setfilepointer
             if seek_offset != 0 {
-                let r = SetFilePointer(fd, seek_offset, std::ptr::null_mut(), FILE_CURRENT);
+                let r = SetFilePointer(fd, seek_offset, std::ptr::null_mut(), FILE_BEGIN);
                 if INVALID_SET_FILE_POINTER == r {
                     return Err(io::Error::last_os_error());
                 }

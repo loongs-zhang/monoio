@@ -24,7 +24,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           profile: ${{ env.TOOLCHAIN_PROFILE }}
-          toolchain: ${{ matrix.target == 'i686-pc-windows-gnu' && format('{0}-i686-pc-windows-gnu', matrix.channel) || matrix.channel }}
+          toolchain: ${{ matrix.target == 'i686-pc-windows-gnu' && format('{0}-i686-pc-windows-gnu', matrix.channel) || matrix.target == 'aarch64-pc-windows-msvc' && format('{0}-aarch64-pc-windows-msvc', matrix.channel) || matrix.channel }}
           target: ${{ matrix.target }}
           override: true
           components: rustfmt, clippy

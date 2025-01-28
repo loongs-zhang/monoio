@@ -88,8 +88,12 @@ utils = ["nix"]
 debug = ["tracing"]
 # enable legacy driver support(will make monoio available for older kernel and macOS)
 legacy = ["mio"]
-# iouring support
+# io_uring support for linux
 iouring = ["io-uring"]
+# iocp support for windows
+iocp = []
+# Provide completion IO adaptation
+completion_io = ["iouring", "iocp"]
 # tokio-compatible(only have effect when legacy is enabled and iouring is not)
 tokio-compat = ["tokio"]
 # (experimental)enable poll-io to convert structs to structs that impl tokio's poll io
@@ -98,7 +102,7 @@ poll-io = ["tokio", "mio"]
 signal = ["ctrlc", "sync"]
 signal-termination = ["signal", "ctrlc/termination"]
 # by default both iouring and legacy are enabled
-default = ["async-cancel", "bytes", "iouring", "legacy", "macros", "utils"]
+default = ["async-cancel", "bytes", "completion_io", "legacy", "macros", "utils"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }

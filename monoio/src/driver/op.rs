@@ -138,6 +138,29 @@ impl Drop for MaybeFd {
     }
 }
 
+#[cfg(all(windows, feature = "iocp"))]
+pub enum Syscall {
+    accept,
+}
+
+#[cfg(all(windows, feature = "iocp"))]
+pub struct Overlapped {
+    /// The base [`OVERLAPPED`].
+    base: windows_sys::Win32::System::IO::OVERLAPPED,
+    from_fd: windows_sys::Win32::Networking::WinSock::SOCKET,
+    pub user_data: usize,
+    syscall: Syscall,
+    socket: windows_sys::Win32::Networking::WinSock::SOCKET,
+    pub result: std::ffi::c_longlong,
+}
+
+#[cfg(all(windows, feature = "iocp"))]
+impl Default for Overlapped {
+    fn default() -> Self {
+        unsafe { std::mem::zeroed() }
+    }
+}
+
 pub(crate) trait OpAble {
     #[cfg(all(target_os = "linux", feature = "iouring"))]
     const RET_IS_FD: bool = false;
@@ -145,6 +168,11 @@ pub(crate) trait OpAble {
     const SKIP_CANCEL: bool = false;
     #[cfg(all(target_os = "linux", feature = "iouring"))]
     fn uring_op(&mut self) -> io_uring::squeue::Entry;
+
+    #[cfg(all(windows, feature = "iocp"))]
+    fn iocp_op(&mut self) -> io::Result<Overlapped> {
+        Err(io::Error::new(io::ErrorKind::Other, "iocp is not implemented yet"))
+    }
 
     #[cfg(any(feature = "legacy", feature = "poll-io"))]
     fn legacy_interest(&self) -> Option<(super::ready::Direction, usize)>;

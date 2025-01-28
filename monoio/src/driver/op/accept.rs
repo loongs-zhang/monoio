@@ -18,6 +18,16 @@ use {
 use super::{super::shared_fd::SharedFd, Op, OpAble};
 #[cfg(any(feature = "legacy", feature = "poll-io"))]
 use super::{driver::ready::Direction, MaybeFd};
+#[cfg(all(windows, feature = "iocp"))]
+use {
+    super::{Overlapped, Syscall},
+    std::ffi::c_longlong,
+    std::io::{Error, ErrorKind},
+    windows_sys::Win32::Networking::WinSock::{
+        getsockopt, WSASocketW, SOL_SOCKET, SO_PROTOCOL_INFO, WSAENETDOWN, WSAPROTOCOL_INFOW,
+        WSA_FLAG_OVERLAPPED,
+    },
+};
 
 /// Accept
 pub(crate) struct Accept {
@@ -62,6 +72,47 @@ impl OpAble for Accept {
             &mut self.addr.1,
         )
         .build()
+    }
+
+    #[cfg(all(windows, feature = "iocp"))]
+    fn iocp_op(&mut self) -> io::Result<Overlapped> {
+        let fd = self.fd.as_raw_socket() as _;
+        unsafe {
+            let mut sock_info: WSAPROTOCOL_INFOW = std::mem::zeroed();
+            let mut sock_info_len = size_of::<WSAPROTOCOL_INFOW>()
+                .try_into()
+                .expect("sock_info_len overflow");
+            if getsockopt(
+                fd,
+                SOL_SOCKET,
+                SO_PROTOCOL_INFO,
+                std::ptr::from_mut(&mut sock_info).cast(),
+                &mut sock_info_len,
+            ) != 0
+            {
+                return Err(Error::new(ErrorKind::Other, "get socket info failed"));
+            }
+            let socket = WSASocketW(
+                sock_info.iAddressFamily,
+                sock_info.iSocketType,
+                sock_info.iProtocol,
+                &sock_info,
+                0,
+                WSA_FLAG_OVERLAPPED,
+            );
+            if INVALID_SOCKET == socket {
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    format!("add {syscall_name} operation failed"),
+                ));
+            }
+            let mut overlapped = Overlapped::default();
+            overlapped.from_fd = fd;
+            overlapped.syscall = Syscall::accept;
+            overlapped.socket = socket;
+            overlapped.result = -c_longlong::from(WSAENETDOWN);
+            Ok(overlapped)
+        }
     }
 
     #[cfg(any(feature = "legacy", feature = "poll-io"))]

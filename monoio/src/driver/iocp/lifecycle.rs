@@ -1,5 +1,4 @@
-//! Uring state lifecycle.
-//! Partly borrow from tokio-uring.
+//! IOCP state lifecycle.
 
 use std::{
     io,
@@ -12,7 +11,7 @@ use crate::{
 };
 
 enum Lifecycle {
-    /// The operation has been submitted to uring and is currently in-flight
+    /// The operation has been submitted to IOCP and is currently in-flight
     Submitted,
 
     /// The submitter is waiting for the completion of the operation

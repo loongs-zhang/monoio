@@ -16,11 +16,8 @@ pub(crate) mod thread;
 mod legacy;
 #[cfg(all(target_os = "linux", feature = "iouring"))]
 mod uring;
-#[cfg(all(windows, feature = "iocp"))]
-mod iocp;
-
 #[allow(missing_docs, unreachable_pub, dead_code, unused_imports)]
-#[cfg(all(windows, any(feature = "legacy", feature = "poll-io")))]
+#[cfg(all(windows, any(feature = "legacy", feature = "poll-io", feature = "iocp")))]
 pub(crate) mod iocp;
 
 mod util;
@@ -101,7 +98,7 @@ pub(crate) enum Inner {
     #[cfg(all(target_os = "linux", feature = "iouring"))]
     Uring(std::rc::Rc<std::cell::UnsafeCell<UringInner>>),
     #[cfg(all(windows, feature = "iocp"))]
-    IOCP(std::rc::Rc<std::cell::UnsafeCell<IocpInner>>),
+    Iocp(std::rc::Rc<std::cell::UnsafeCell<IocpInner>>),
     #[cfg(feature = "legacy")]
     Legacy(std::rc::Rc<std::cell::UnsafeCell<LegacyInner>>),
 }
@@ -112,7 +109,7 @@ impl Inner {
             #[cfg(all(target_os = "linux", feature = "iouring"))]
             Inner::Uring(this) => UringInner::submit_with_data(this, data),
             #[cfg(all(windows, feature = "iocp"))]
-            Inner::IOCP(this) => IocpInner::submit_with_data(this, data),
+            Inner::Iocp(this) => IocpInner::submit_with_data(this, data),
             #[cfg(feature = "legacy")]
             Inner::Legacy(this) => LegacyInner::submit_with_data(this, data),
             #[cfg(all(
@@ -136,7 +133,7 @@ impl Inner {
             #[cfg(all(target_os = "linux", feature = "iouring"))]
             Inner::Uring(this) => UringInner::poll_op(this, index, cx),
             #[cfg(all(windows, feature = "iocp"))]
-            Inner::IOCP(this) => IocpInner::poll_op(this, index, cx),
+            Inner::Iocp(this) => IocpInner::poll_op(this, index, cx),
             #[cfg(feature = "legacy")]
             Inner::Legacy(this) => LegacyInner::poll_op::<T>(this, data, cx),
             #[cfg(all(
@@ -159,7 +156,7 @@ impl Inner {
             #[cfg(all(target_os = "linux", feature = "iouring"))]
             Inner::Uring(this) => UringInner::poll_legacy_op(this, data, cx),
             #[cfg(all(windows, feature = "iocp"))]
-            Inner::IOCP(this) => IocpInner::poll_legacy_op(this, data, cx),
+            Inner::Iocp(this) => IocpInner::poll_legacy_op(this, data, cx),
             #[cfg(feature = "legacy")]
             Inner::Legacy(this) => LegacyInner::poll_op::<T>(this, data, cx),
             #[cfg(all(
@@ -186,7 +183,7 @@ impl Inner {
     #[inline]
     fn drop_op<T: 'static>(&self, index: usize, data: &mut Option<T>, skip_cancel: bool) {
         match self {
-            Inner::IOCP(this) => IocpInner::drop_op(this, index, data, skip_cancel),
+            Inner::Iocp(this) => IocpInner::drop_op(this, index, data, skip_cancel),
             #[cfg(feature = "legacy")]
             Inner::Legacy(_) => {}
         }
@@ -198,7 +195,7 @@ impl Inner {
             #[cfg(all(target_os = "linux", feature = "iouring"))]
             Inner::Uring(this) => UringInner::cancel_op(this, op_canceller.index),
             #[cfg(all(windows, feature = "iocp"))]
-            Inner::IOCP(this) => IocpInner::cancel_op(this, op_canceller.index),
+            Inner::Iocp(this) => IocpInner::cancel_op(this, op_canceller.index),
             #[cfg(feature = "legacy")]
             Inner::Legacy(this) => {
                 if let Some(direction) = op_canceller.direction {
@@ -249,7 +246,7 @@ pub(crate) enum UnparkHandle {
     #[cfg(all(target_os = "linux", feature = "iouring"))]
     Uring(self::uring::UnparkHandle),
     #[cfg(all(windows, feature = "iocp"))]
-    IOCP(self::iocp::UnparkHandle),
+    Iocp(self::iocp::UnparkHandle),
     #[cfg(feature = "legacy")]
     Legacy(self::legacy::UnparkHandle),
 }
@@ -261,7 +258,7 @@ impl unpark::Unpark for UnparkHandle {
             #[cfg(all(target_os = "linux", feature = "iouring"))]
             UnparkHandle::Uring(inner) => inner.unpark(),
             #[cfg(all(windows, feature = "iocp"))]
-            UnparkHandle::IOCP(inner) => inner.unpark(),
+            UnparkHandle::Iocp(inner) => inner.unpark(),
             #[cfg(feature = "legacy")]
             UnparkHandle::Legacy(inner) => inner.unpark(),
             #[cfg(all(
@@ -285,7 +282,7 @@ impl From<self::uring::UnparkHandle> for UnparkHandle {
 #[cfg(all(feature = "sync", windows, feature = "iocp"))]
 impl From<self::iocp::UnparkHandle> for UnparkHandle {
     fn from(inner: self::iocp::UnparkHandle) -> Self {
-        Self::IOCP(inner)
+        Self::Iocp(inner)
     }
 }
 
@@ -304,7 +301,7 @@ impl UnparkHandle {
             #[cfg(all(target_os = "linux", feature = "iouring"))]
             Inner::Uring(this) => UringInner::unpark(this).into(),
             #[cfg(all(windows, feature = "iocp"))]
-            Inner::IOCP(this) => IocpInner::unpark(this).into(),
+            Inner::Iocp(this) => IocpInner::unpark(this).into(),
             #[cfg(feature = "legacy")]
             Inner::Legacy(this) => LegacyInner::unpark(this).into(),
         })

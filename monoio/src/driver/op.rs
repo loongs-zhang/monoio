@@ -171,7 +171,7 @@ pub(crate) trait OpAble {
 
     #[cfg(all(windows, feature = "iocp"))]
     fn iocp_op(&mut self) -> io::Result<Overlapped> {
-        Err(io::Error::new(io::ErrorKind::Other, "iocp is not implemented yet"))
+        Err(io::Error::other("iocp is not implemented yet"))
     }
 
     #[cfg(any(feature = "legacy", feature = "poll-io"))]

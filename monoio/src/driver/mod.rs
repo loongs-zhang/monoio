@@ -1,7 +1,7 @@
 /// Monoio Driver.
 #[allow(dead_code)]
 pub(crate) mod op;
-#[cfg(all(feature = "poll-io", unix))]
+#[cfg(feature = "poll-io")]
 pub(crate) mod poll;
 #[cfg(any(feature = "legacy", feature = "poll-io"))]
 pub(crate) mod ready;
@@ -18,6 +18,10 @@ mod legacy;
 mod uring;
 #[cfg(all(windows, feature = "iocp"))]
 mod iocp;
+
+#[allow(missing_docs, unreachable_pub, dead_code, unused_imports)]
+#[cfg(all(windows, any(feature = "legacy", feature = "poll-io")))]
+pub(crate) mod iocp;
 
 mod util;
 

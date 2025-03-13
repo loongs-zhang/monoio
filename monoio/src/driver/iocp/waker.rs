@@ -1,3 +1,29 @@
+use std::{io, sync::Arc};
+
+use super::{CompletionPort, Event, Poller};
+
+#[derive(Debug)]
+pub struct Waker {
+    token: mio::Token,
+    port: Arc<CompletionPort>,
+}
+
+impl Waker {
+    #[allow(unreachable_code, unused_variables)]
+    pub fn new(poller: &Poller, token: mio::Token) -> io::Result<Waker> {
+        Ok(Waker {
+            token,
+            port: poller.cp.clone(),
+        })
+    }
+
+    pub fn wake(&self) -> io::Result<()> {
+        let mut ev = Event::new(self.token);
+        ev.set_readable();
+        self.port.post(ev.to_entry())
+    }
+}
+
 //! Custom thread waker based on eventfd.
 
 use std::os::windows::prelude::{AsRawHandle, RawHandle};
@@ -54,3 +80,4 @@ impl Unpark for UnparkHandle {
         }
     }
 }
+

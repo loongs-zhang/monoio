@@ -141,6 +141,10 @@ impl Drop for MaybeFd {
 #[cfg(all(windows, feature = "iocp"))]
 pub enum Syscall {
     accept,
+    recv,
+    WSARecv,
+    send,
+    WSASend,
 }
 
 #[cfg(all(windows, feature = "iocp"))]
@@ -170,7 +174,7 @@ pub(crate) trait OpAble {
     fn uring_op(&mut self) -> io_uring::squeue::Entry;
 
     #[cfg(all(windows, feature = "iocp"))]
-    fn iocp_op(&mut self) -> io::Result<Overlapped> {
+    fn iocp_op(&mut self, iocp: &CompletionPort, user_data: usize) -> io::Result<()> {
         Err(io::Error::other("iocp is not implemented yet"))
     }
 

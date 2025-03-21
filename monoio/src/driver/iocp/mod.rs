@@ -330,9 +330,7 @@ use lifecycle::MaybeFdLifecycle;
 use super::{
     op::{CompletionMeta, Op, OpAble},
     ready::Ready,
-    Driver,
-    Inner,
-    CURRENT,
+    Driver, Inner, CURRENT,
 };
 use crate::utils::slab::Slab;
 
@@ -342,9 +340,6 @@ pub(crate) use waker::UnparkHandle;
 
 #[allow(unused)]
 pub(crate) const CANCEL_USERDATA: u64 = u64::MAX;
-pub(crate) const TIMEOUT_USERDATA: u64 = u64::MAX - 1;
-#[allow(unused)]
-pub(crate) const EVENTFD_USERDATA: u64 = u64::MAX - 2;
 
 pub(crate) const MIN_REVERSED_USERDATA: u64 = u64::MAX - 3;
 
@@ -441,16 +436,6 @@ impl IocpDriver {
         unsafe { (*inner).ops.slab.len() }
     }
 
-    // Flush to make enough space
-    fn flush_space(inner: &mut IocpInner, need: usize) -> std::io::Result<()> {
-        let sq = inner.iocp.submission();
-        debug_assert!(sq.capacity() >= need);
-        if sq.len() + need > sq.capacity() {
-            inner.submit()?;
-        }
-        Ok(())
-    }
-
     fn inner_park(&self, timeout: Option<Duration>) -> std::io::Result<()> {
         let inner = unsafe { &mut *self.inner.get() };
 
@@ -480,45 +465,28 @@ impl IocpDriver {
             }
         }
 
+        let mut cq: [OVERLAPPED_ENTRY; 1024] = unsafe { std::mem::zeroed() };
         if need_wait {
-            // Install timeout and eventfd for unpark if sync is enabled
-
-            // 1. alloc spaces
-            let mut space = 0;
-            #[cfg(feature = "sync")]
-            if !inner.eventfd_installed {
-                space += 1;
-            }
-            if timeout.is_some() {
-                space += 1;
-            }
-            if space != 0 {
-                Self::flush_space(inner, space)?;
-            }
-
             // submit_and_wait with timeout
-            inner.iocp.get_many(1)?;
+            inner.iocp.get_many(&mut cq, timeout)?;
         } else {
             // Submit only
-            inner.iocp.submit()?;
+            inner.iocp.get_many(&mut cq, Some(Duration::ZERO))?;
         }
 
         // Set status as awake
         #[cfg(feature = "sync")]
-        inner
-            .shared_waker
-            .awake
-            .store(true, Ordering::Release);
+        inner.shared_waker.awake.store(true, Ordering::Release);
 
         // Process CQ
-        inner.tick()?;
+        inner.tick(cq)?;
 
         Ok(())
     }
 }
 
 impl Driver for IocpDriver {
-    /// Enter the driver context. This enables using uring types.
+    /// Enter the driver context. This enables using iocp types.
     fn with<R>(&self, f: impl FnOnce() -> R) -> R {
         // TODO(ihciah): remove clone
         let inner = Inner::Iocp(self.inner.clone());
@@ -526,9 +494,6 @@ impl Driver for IocpDriver {
     }
 
     fn submit(&self) -> std::io::Result<()> {
-        let inner = unsafe { &mut *self.inner.get() };
-        inner.submit()?;
-        inner.tick()?;
         Ok(())
     }
 
@@ -550,45 +515,18 @@ impl Driver for IocpDriver {
 }
 
 impl IocpInner {
-    fn tick(&mut self) -> std::io::Result<()> {
-        let cq = self.iocp.completion();
-
-        for cqe in cq {
-            let index = cqe.user_data();
+    fn tick(&mut self, cq: [OVERLAPPED_ENTRY; 1024]) -> std::io::Result<()> {
+        for entry in cq {
+            let mut cqe = unsafe { *Box::from_raw(entry.lpOverlapped.cast::<Overlapped>()) };
+            let index = cqe.user_data;
             match index {
-                #[cfg(feature = "sync")]
-                EVENTFD_USERDATA => self.eventfd_installed = false,
                 _ if index >= MIN_REVERSED_USERDATA => (),
                 // # Safety
                 // Here we can make sure the result is valid.
-                _ => unsafe { self.ops.complete(index as _, resultify(&cqe), cqe.flags()) },
+                _ => unsafe { self.ops.complete(index as _, resultify(&cqe), 0) },
             }
         }
         Ok(())
-    }
-
-    fn submit(&mut self) -> std::io::Result<()> {
-        loop {
-            match self.iocp.submit() {
-                #[cfg(feature = "unstable")]
-                Err(ref e)
-                    if matches!(e.kind(), std::io::ErrorKind::Other | std::io::ErrorKind::ResourceBusy) =>
-                {
-                    self.tick()?;
-                }
-                #[cfg(not(feature = "unstable"))]
-                Err(ref e)
-                    if matches!(e.raw_os_error(), Some(libc::EAGAIN) | Some(libc::EBUSY)) =>
-                {
-                    // This error is constructed with std::io::Error::last_os_error():
-                    // https://github.com/tokio-rs/io-uring/blob/01c83bbce965d4aaf93ebfaa08c3aa8b7b0f5335/src/sys/mod.rs#L32
-                    // So we can use https://doc.rust-lang.org/nightly/std/io/struct.Error.html#method.raw_os_error
-                    // to get the raw error code.
-                    self.tick()?;
-                }
-                e => return e.map(|_| ()),
-            }
-        }
     }
 
     fn new_op<T: OpAble>(data: T, inner: &mut IocpInner, driver: Inner) -> Op<T> {
@@ -607,26 +545,13 @@ impl IocpInner {
         T: OpAble,
     {
         let inner = unsafe { &mut *this.get() };
-        // If the submission queue is full, flush it to the kernel
-        if inner.iocp.submission().is_full() {
-            inner.submit()?;
-        }
 
         // Create the operation
-        let mut op = Self::new_op(data, inner, Inner::Uring(this.clone()));
+        let mut op = Self::new_op(data, inner, Inner::Iocp(this.clone()));
 
         // Configure the SQE
         let data_mut = unsafe { op.data.as_mut().unwrap_unchecked() };
-        let sqe = OpAble::uring_op(data_mut).user_data(op.index as _);
-
-        {
-            let mut sq = inner.iocp.submission();
-
-            // Push the new operation
-            if unsafe { sq.push(&sqe).is_err() } {
-                unimplemented!("when is this hit?");
-            }
-        }
+        OpAble::iocp_op(data_mut, &inner.iocp, op.index)?;
 
         // Submit the new operation. At this point, the operation has been
         // pushed onto the queue and the tail pointer has been updated, so
@@ -672,7 +597,6 @@ impl IocpInner {
 
                     // Try push cancel, if failed, will submit and re-push.
                     if inner.iocp.submission().push(&cancel).is_err() {
-                        let _ = inner.submit();
                         let _ = inner.iocp.submission().push(&cancel);
                     }
                 }
@@ -686,7 +610,6 @@ impl IocpInner {
             .build()
             .user_data(u64::MAX);
         if inner.iocp.submission().push(&cancel).is_err() {
-            let _ = inner.submit();
             let _ = inner.iocp.submission().push(&cancel);
         }
     }
@@ -727,7 +650,6 @@ impl Drop for IocpDriver {
 impl Drop for IocpInner {
     fn drop(&mut self) {
         // no need to wait for completion, as the kernel will clean up the ring asynchronically.
-        let _ = self.iocp.submitter().submit();
         unsafe {
             ManuallyDrop::drop(&mut self.iocp);
         }
@@ -756,8 +678,27 @@ impl Ops {
 }
 
 #[inline]
-fn resultify(cqe: &cqueue::Entry) -> std::io::Result<u32> {
-    let res = cqe.result();
+fn resultify(cqe: &Overlapped) -> std::io::Result<u32> {
+    let res = match cqe.syscall {
+        Syscall::accept => {
+            if setsockopt(
+                cqe.socket,
+                SOL_SOCKET,
+                SO_UPDATE_ACCEPT_CONTEXT,
+                std::ptr::from_ref(&cqe.from_fd).cast(),
+                c_int::try_from(size_of::<SOCKET>()).expect("overflow"),
+            ) == 0
+            {
+                cqe.socket.try_into().expect("result overflow")
+            } else {
+                -WSAENETDOWN
+            }
+        }
+        Syscall::recv | Syscall::WSARecv | Syscall::send | Syscall::WSASend => {
+            cqe.base.dwNumberOfBytesTransferred.into()
+        }
+        _ => panic!("unsupported"),
+    };
 
     if res >= 0 {
         Ok(res as u32)

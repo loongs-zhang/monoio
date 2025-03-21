@@ -24,9 +24,9 @@ impl Waker {
     }
 }
 
-//! Custom thread waker based on eventfd.
-
+/// Custom thread waker based on eventfd.
 use std::os::windows::prelude::{AsRawHandle, RawHandle};
+
 use crate::driver::unpark::Unpark;
 
 pub(crate) struct EventWaker {
@@ -80,4 +80,3 @@ impl Unpark for UnparkHandle {
         }
     }
 }
-

@@ -7,6 +7,16 @@ use std::{
 
 #[cfg(all(target_os = "linux", feature = "iouring"))]
 use io_uring::{opcode, types};
+#[cfg(all(windows, feature = "iocp"))]
+use {
+    super::{Overlapped, Syscall},
+    std::ffi::c_longlong,
+    std::io::{Error, ErrorKind},
+    windows_sys::Win32::Networking::WinSock::{
+        getsockopt, WSASocketW, SOL_SOCKET, SO_PROTOCOL_INFO, WSAENETDOWN, WSAPROTOCOL_INFOW,
+        WSA_FLAG_OVERLAPPED,
+    },
+};
 #[cfg(windows)]
 use {
     std::os::windows::prelude::AsRawSocket,
@@ -18,16 +28,6 @@ use {
 use super::{super::shared_fd::SharedFd, Op, OpAble};
 #[cfg(any(feature = "legacy", feature = "poll-io"))]
 use super::{driver::ready::Direction, MaybeFd};
-#[cfg(all(windows, feature = "iocp"))]
-use {
-    super::{Overlapped, Syscall},
-    std::ffi::c_longlong,
-    std::io::{Error, ErrorKind},
-    windows_sys::Win32::Networking::WinSock::{
-        getsockopt, WSASocketW, SOL_SOCKET, SO_PROTOCOL_INFO, WSAENETDOWN, WSAPROTOCOL_INFOW,
-        WSA_FLAG_OVERLAPPED,
-    },
-};
 
 /// Accept
 pub(crate) struct Accept {

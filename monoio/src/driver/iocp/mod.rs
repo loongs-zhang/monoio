@@ -261,7 +261,7 @@ impl Drop for Poller {
 
             let result = self
                 .cp
-                .get_many(&mut statuses, Some(std::time::Duration::from_millis(0)));
+                .get_many(&mut statuses, Some(Duration::from_millis(0)));
             match result {
                 Ok(events) => {
                     count = events.iter().len();
@@ -317,25 +317,19 @@ pub fn interests_to_afd_flags(interests: mio::Interest) -> u32 {
     flags
 }
 
-//! Monoio IOCP Driver.
-
+/// Monoio IOCP Driver.
 use std::{
     cell::UnsafeCell,
-    io,
     mem::ManuallyDrop,
-    os::unix::prelude::{AsRawFd, RawFd},
     rc::Rc,
     task::{Context, Poll},
-    time::Duration,
 };
 
 use lifecycle::MaybeFdLifecycle;
 
 use super::{
     op::{CompletionMeta, Op, OpAble},
-    // ready::Ready,
-    // scheduled_io::ScheduledIo,
-    util::timespec,
+    ready::Ready,
     Driver,
     Inner,
     CURRENT,
@@ -344,8 +338,6 @@ use crate::utils::slab::Slab;
 
 mod lifecycle;
 #[cfg(feature = "sync")]
-mod waker;
-#[cfg(feature = "sync")]
 pub(crate) use waker::UnparkHandle;
 
 #[allow(unused)]
@@ -353,17 +345,12 @@ pub(crate) const CANCEL_USERDATA: u64 = u64::MAX;
 pub(crate) const TIMEOUT_USERDATA: u64 = u64::MAX - 1;
 #[allow(unused)]
 pub(crate) const EVENTFD_USERDATA: u64 = u64::MAX - 2;
-#[cfg(feature = "poll-io")]
-pub(crate) const POLLER_USERDATA: u64 = u64::MAX - 3;
 
 pub(crate) const MIN_REVERSED_USERDATA: u64 = u64::MAX - 3;
 
 /// Driver with IOCP.
 pub struct IocpDriver {
     inner: Rc<UnsafeCell<IocpInner>>,
-
-    // Used as timeout buffer
-    timespec: *mut Timespec,
 
     // Used as read eventfd buffer
     #[cfg(feature = "sync")]
@@ -378,17 +365,12 @@ pub(crate) struct IocpInner {
     /// In-flight operations
     ops: Ops,
 
-    #[cfg(feature = "poll-io")]
-    poll: super::poll::Poll,
-    #[cfg(feature = "poll-io")]
-    poller_installed: bool,
-
     /// IOCP bindings
-    iocp: ManuallyDrop<Iocp>,
+    iocp: ManuallyDrop<CompletionPort>,
 
     /// Shared waker
     #[cfg(feature = "sync")]
-    shared_waker: std::sync::Arc<waker::EventWaker>,
+    shared_waker: Arc<EventWaker>,
 
     // Mark if eventfd is in the ring
     #[cfg(feature = "sync")]
@@ -397,9 +379,6 @@ pub(crate) struct IocpInner {
     // Waker receiver
     #[cfg(feature = "sync")]
     waker_receiver: flume::Receiver<std::task::Waker>,
-
-    // IOCP support ext_arg
-    ext_arg: bool,
 }
 
 // When dropping the driver, all in-flight operations must have completed. This
@@ -411,25 +390,15 @@ struct Ops {
 impl IocpDriver {
     const DEFAULT_ENTRIES: u32 = 1024;
 
-    pub(crate) fn new(b: &io_uring::Builder) -> io::Result<IocpDriver> {
-        Self::new_with_entries(b, Self::DEFAULT_ENTRIES)
+    pub(crate) fn new() -> std::io::Result<IocpDriver> {
+        Self::new_with_entries(Self::DEFAULT_ENTRIES)
     }
 
     #[cfg(not(feature = "sync"))]
-    pub(crate) fn new_with_entries(
-        urb: &io_uring::Builder,
-        entries: u32,
-    ) -> io::Result<IocpDriver> {
-        let uring = ManuallyDrop::new(urb.build(entries)?);
-
+    pub(crate) fn new_with_entries(_entries: u32) -> std::io::Result<IocpDriver> {
         let inner = Rc::new(UnsafeCell::new(IocpInner {
-            #[cfg(feature = "poll-io")]
-            poll: super::poll::Poll::with_capacity(entries as usize)?,
-            #[cfg(feature = "poll-io")]
-            poller_installed: false,
             ops: Ops::new(),
-            ext_arg: uring.params().is_feature_ext_arg(),
-            iocp: uring,
+            iocp: ManuallyDrop::new(CompletionPort::new(0)?),
         }));
 
         Ok(IocpDriver {
@@ -439,32 +408,16 @@ impl IocpDriver {
     }
 
     #[cfg(feature = "sync")]
-    pub(crate) fn new_with_entries(
-        urb: &io_uring::Builder,
-        entries: u32,
-    ) -> io::Result<IocpDriver> {
-        let uring = ManuallyDrop::new(urb.build(entries)?);
-
+    pub(crate) fn new_with_entries(_entries: u32) -> std::io::Result<IocpDriver> {
         // Create eventfd and register it to the ring.
-        let waker = {
-            let fd = crate::syscall!(eventfd@RAW(0, libc::EFD_CLOEXEC))?;
-            unsafe {
-                use std::os::unix::io::FromRawFd;
-                std::fs::File::from_raw_fd(fd)
-            }
-        };
+        let waker = tempfile::tempfile()?;
 
         let (waker_sender, waker_receiver) = flume::unbounded::<std::task::Waker>();
 
         let inner = Rc::new(UnsafeCell::new(IocpInner {
-            #[cfg(feature = "poll-io")]
-            poller_installed: false,
-            #[cfg(feature = "poll-io")]
-            poll: super::poll::Poll::with_capacity(entries as usize)?,
             ops: Ops::new(),
-            ext_arg: uring.params().is_feature_ext_arg(),
-            iocp: uring,
-            shared_waker: std::sync::Arc::new(waker::EventWaker::new(waker)),
+            iocp: ManuallyDrop::new(CompletionPort::new(0)?),
+            shared_waker: Arc::new(EventWaker::new(waker)),
             eventfd_installed: false,
             waker_receiver,
         }));
@@ -472,7 +425,6 @@ impl IocpDriver {
         let thread_id = crate::builder::BUILD_THREAD_ID.with(|id| *id);
         let driver = IocpDriver {
             inner,
-            timespec: Box::leak(Box::new(Timespec::new())) as *mut Timespec,
             eventfd_read_dst: Box::leak(Box::new([0_u8; 8])) as *mut u8,
             thread_id,
         };
@@ -490,52 +442,16 @@ impl IocpDriver {
     }
 
     // Flush to make enough space
-    fn flush_space(inner: &mut IocpInner, need: usize) -> io::Result<()> {
+    fn flush_space(inner: &mut IocpInner, need: usize) -> std::io::Result<()> {
         let sq = inner.iocp.submission();
         debug_assert!(sq.capacity() >= need);
         if sq.len() + need > sq.capacity() {
-            drop(sq);
             inner.submit()?;
         }
         Ok(())
     }
 
-    #[cfg(feature = "sync")]
-    fn install_eventfd(&self, inner: &mut IocpInner, fd: RawFd) {
-        let entry = opcode::Read::new(io_uring::types::Fd(fd), self.eventfd_read_dst, 8)
-            .build()
-            .user_data(EVENTFD_USERDATA);
-
-        let mut sq = inner.iocp.submission();
-        let _ = unsafe { sq.push(&entry) };
-        inner.eventfd_installed = true;
-    }
-
-    #[cfg(feature = "poll-io")]
-    fn install_poller(&self, inner: &mut IocpInner, fd: RawFd) {
-        let entry = opcode::PollAdd::new(io_uring::types::Fd(fd), libc::POLLIN as _)
-            .build()
-            .user_data(POLLER_USERDATA);
-
-        let mut sq = inner.iocp.submission();
-        let _ = unsafe { sq.push(&entry) };
-        inner.poller_installed = true;
-    }
-
-    fn install_timeout(&self, inner: &mut IocpInner, duration: Duration) {
-        let timespec = timespec(duration);
-        unsafe {
-            std::ptr::replace(self.timespec, timespec);
-        }
-        let entry = opcode::Timeout::new(self.timespec as *const Timespec)
-            .build()
-            .user_data(TIMEOUT_USERDATA);
-
-        let mut sq = inner.iocp.submission();
-        let _ = unsafe { sq.push(&entry) };
-    }
-
-    fn inner_park(&self, timeout: Option<Duration>) -> io::Result<()> {
+    fn inner_park(&self, timeout: Option<Duration>) -> std::io::Result<()> {
         let inner = unsafe { &mut *self.inner.get() };
 
         #[allow(unused_mut)]
@@ -573,10 +489,6 @@ impl IocpDriver {
             if !inner.eventfd_installed {
                 space += 1;
             }
-            #[cfg(feature = "poll-io")]
-            if !inner.poller_installed {
-                space += 1;
-            }
             if timeout.is_some() {
                 space += 1;
             }
@@ -584,43 +496,8 @@ impl IocpDriver {
                 Self::flush_space(inner, space)?;
             }
 
-            // 2.1 install poller
-            #[cfg(feature = "poll-io")]
-            if !inner.poller_installed {
-                self.install_poller(inner, inner.poll.as_raw_fd());
-            }
-
-            // 2.2 install eventfd and timeout
-            #[cfg(feature = "sync")]
-            if !inner.eventfd_installed {
-                self.install_eventfd(inner, inner.shared_waker.as_raw_fd());
-            }
-
-            // 2.3 install timeout and submit_and_wait with timeout
-            if let Some(duration) = timeout {
-                match inner.ext_arg {
-                    // Submit and Wait with timeout in an TimeoutOp way.
-                    // Better compatibility(5.4+).
-                    false => {
-                        self.install_timeout(inner, duration);
-                        inner.iocp.submit_and_wait(1)?;
-                    }
-                    // Submit and Wait with enter args.
-                    // Better performance(5.11+).
-                    true => {
-                        let timespec = timespec(duration);
-                        let args = io_uring::types::SubmitArgs::new().timespec(&timespec);
-                        if let Err(e) = inner.iocp.submitter().submit_with_args(1, &args) {
-                            if e.raw_os_error() != Some(libc::ETIME) {
-                                return Err(e);
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Submit and Wait without timeout
-                inner.iocp.submit_and_wait(1)?;
-            }
+            // submit_and_wait with timeout
+            inner.iocp.get_many(1)?;
         } else {
             // Submit only
             inner.iocp.submit()?;
@@ -631,34 +508,12 @@ impl IocpDriver {
         inner
             .shared_waker
             .awake
-            .store(true, std::sync::atomic::Ordering::Release);
+            .store(true, Ordering::Release);
 
         // Process CQ
         inner.tick()?;
 
         Ok(())
-    }
-
-    #[cfg(feature = "poll-io")]
-    #[inline]
-    pub(crate) fn register_poll_io(
-        this: &Rc<UnsafeCell<IocpInner>>,
-        source: &mut impl mio::event::Source,
-        interest: mio::Interest,
-    ) -> io::Result<usize> {
-        let inner = unsafe { &mut *this.get() };
-        inner.poll.register(source, interest)
-    }
-
-    #[cfg(feature = "poll-io")]
-    #[inline]
-    pub(crate) fn deregister_poll_io(
-        this: &Rc<UnsafeCell<IocpInner>>,
-        source: &mut impl mio::event::Source,
-        token: usize,
-    ) -> io::Result<()> {
-        let inner = unsafe { &mut *this.get() };
-        inner.poll.deregister(source, token)
     }
 }
 
@@ -666,27 +521,27 @@ impl Driver for IocpDriver {
     /// Enter the driver context. This enables using uring types.
     fn with<R>(&self, f: impl FnOnce() -> R) -> R {
         // TODO(ihciah): remove clone
-        let inner = Inner::Uring(self.inner.clone());
+        let inner = Inner::Iocp(self.inner.clone());
         CURRENT.set(&inner, f)
     }
 
-    fn submit(&self) -> io::Result<()> {
+    fn submit(&self) -> std::io::Result<()> {
         let inner = unsafe { &mut *self.inner.get() };
         inner.submit()?;
         inner.tick()?;
         Ok(())
     }
 
-    fn park(&self) -> io::Result<()> {
+    fn park(&self) -> std::io::Result<()> {
         self.inner_park(None)
     }
 
-    fn park_timeout(&self, duration: Duration) -> io::Result<()> {
+    fn park_timeout(&self, duration: Duration) -> std::io::Result<()> {
         self.inner_park(Some(duration))
     }
 
     #[cfg(feature = "sync")]
-    type Unpark = waker::UnparkHandle;
+    type Unpark = UnparkHandle;
 
     #[cfg(feature = "sync")]
     fn unpark(&self) -> Self::Unpark {
@@ -695,7 +550,7 @@ impl Driver for IocpDriver {
 }
 
 impl IocpInner {
-    fn tick(&mut self) -> io::Result<()> {
+    fn tick(&mut self) -> std::io::Result<()> {
         let cq = self.iocp.completion();
 
         for cqe in cq {
@@ -703,11 +558,6 @@ impl IocpInner {
             match index {
                 #[cfg(feature = "sync")]
                 EVENTFD_USERDATA => self.eventfd_installed = false,
-                #[cfg(feature = "poll-io")]
-                POLLER_USERDATA => {
-                    self.poller_installed = false;
-                    self.poll.tick(Some(Duration::ZERO))?;
-                }
                 _ if index >= MIN_REVERSED_USERDATA => (),
                 // # Safety
                 // Here we can make sure the result is valid.
@@ -717,25 +567,25 @@ impl IocpInner {
         Ok(())
     }
 
-    fn submit(&mut self) -> io::Result<()> {
+    fn submit(&mut self) -> std::io::Result<()> {
         loop {
             match self.iocp.submit() {
                 #[cfg(feature = "unstable")]
                 Err(ref e)
-                if matches!(e.kind(), io::ErrorKind::Other | io::ErrorKind::ResourceBusy) =>
-                    {
-                        self.tick()?;
-                    }
+                    if matches!(e.kind(), std::io::ErrorKind::Other | std::io::ErrorKind::ResourceBusy) =>
+                {
+                    self.tick()?;
+                }
                 #[cfg(not(feature = "unstable"))]
                 Err(ref e)
-                if matches!(e.raw_os_error(), Some(libc::EAGAIN) | Some(libc::EBUSY)) =>
-                    {
-                        // This error is constructed with io::Error::last_os_error():
-                        // https://github.com/tokio-rs/io-uring/blob/01c83bbce965d4aaf93ebfaa08c3aa8b7b0f5335/src/sys/mod.rs#L32
-                        // So we can use https://doc.rust-lang.org/nightly/std/io/struct.Error.html#method.raw_os_error
-                        // to get the raw error code.
-                        self.tick()?;
-                    }
+                    if matches!(e.raw_os_error(), Some(libc::EAGAIN) | Some(libc::EBUSY)) =>
+                {
+                    // This error is constructed with std::io::Error::last_os_error():
+                    // https://github.com/tokio-rs/io-uring/blob/01c83bbce965d4aaf93ebfaa08c3aa8b7b0f5335/src/sys/mod.rs#L32
+                    // So we can use https://doc.rust-lang.org/nightly/std/io/struct.Error.html#method.raw_os_error
+                    // to get the raw error code.
+                    self.tick()?;
+                }
                 e => return e.map(|_| ()),
             }
         }
@@ -752,7 +602,7 @@ impl IocpInner {
     pub(crate) fn submit_with_data<T>(
         this: &Rc<UnsafeCell<IocpInner>>,
         data: T,
-    ) -> io::Result<Op<T>>
+    ) -> std::io::Result<Op<T>>
     where
         T: OpAble,
     {
@@ -798,31 +648,6 @@ impl IocpInner {
         let inner = unsafe { &mut *this.get() };
         let lifecycle = unsafe { inner.ops.slab.get(index).unwrap_unchecked() };
         lifecycle.poll_op(cx)
-    }
-
-    #[cfg(feature = "poll-io")]
-    pub(crate) fn poll_legacy_op<T: OpAble>(
-        this: &Rc<UnsafeCell<Self>>,
-        data: &mut T,
-        cx: &mut Context<'_>,
-    ) -> Poll<CompletionMeta> {
-        let inner = unsafe { &mut *this.get() };
-        let (direction, index) = match data.legacy_interest() {
-            Some(x) => x,
-            None => {
-                // if there is no index provided, it means the action does not rely on fd
-                // readiness. do syscall right now.
-                return Poll::Ready(CompletionMeta {
-                    result: OpAble::legacy_call(data),
-                    flags: 0,
-                });
-            }
-        };
-
-        // wait io ready and do syscall
-        inner
-            .poll
-            .poll_syscall(cx, index, direction, || OpAble::legacy_call(data))
     }
 
     pub(crate) fn drop_op<T: 'static>(
@@ -874,18 +699,15 @@ impl IocpInner {
     }
 }
 
-impl AsRawFd for IocpDriver {
-    fn as_raw_fd(&self) -> RawFd {
-        unsafe { (*self.inner.get()).iocp.as_raw_fd() }
+impl AsRawHandle for IocpDriver {
+    fn as_raw_handle(&self) -> RawHandle {
+        unsafe { (*self.inner.get()).iocp.as_raw_handle() }
     }
 }
 
 impl Drop for IocpDriver {
     fn drop(&mut self) {
-        trace!("MONOIO DEBUG[IoUringDriver]: drop");
-
-        // Dealloc leaked memory
-        unsafe { std::ptr::drop_in_place(self.timespec) };
+        trace!("MONOIO DEBUG[IocpDriver]: drop");
 
         #[cfg(feature = "sync")]
         unsafe {
@@ -927,19 +749,19 @@ impl Ops {
     // # Safety
     // Caller must make sure the result is valid.
     #[inline]
-    unsafe fn complete(&mut self, index: usize, result: io::Result<u32>, flags: u32) {
+    unsafe fn complete(&mut self, index: usize, result: std::io::Result<u32>, flags: u32) {
         let lifecycle = unsafe { self.slab.get(index).unwrap_unchecked() };
         lifecycle.complete(result, flags);
     }
 }
 
 #[inline]
-fn resultify(cqe: &cqueue::Entry) -> io::Result<u32> {
+fn resultify(cqe: &cqueue::Entry) -> std::io::Result<u32> {
     let res = cqe.result();
 
     if res >= 0 {
         Ok(res as u32)
     } else {
-        Err(io::Error::from_raw_os_error(-res))
+        Err(std::io::Error::from_raw_os_error(-res))
     }
 }

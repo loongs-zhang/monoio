@@ -12,13 +12,16 @@ pub(crate) mod shared_fd;
 #[cfg(feature = "sync")]
 pub(crate) mod thread;
 
+#[allow(missing_docs, unreachable_pub, dead_code, unused_imports)]
+#[cfg(all(
+    windows,
+    any(feature = "legacy", feature = "poll-io", feature = "iocp")
+))]
+pub(crate) mod iocp;
 #[cfg(feature = "legacy")]
 mod legacy;
 #[cfg(all(target_os = "linux", feature = "iouring"))]
 mod uring;
-#[allow(missing_docs, unreachable_pub, dead_code, unused_imports)]
-#[cfg(all(windows, any(feature = "legacy", feature = "poll-io", feature = "iocp")))]
-pub(crate) mod iocp;
 
 mod util;
 
@@ -28,6 +31,8 @@ use std::{
     time::Duration,
 };
 
+#[cfg(all(windows, feature = "iocp"))]
+use self::iocp::IocpInner;
 #[allow(unreachable_pub)]
 #[cfg(feature = "legacy")]
 pub use self::legacy::LegacyDriver;
@@ -38,8 +43,6 @@ use self::op::{CompletionMeta, Op, OpAble};
 pub use self::uring::IoUringDriver;
 #[cfg(all(target_os = "linux", feature = "iouring"))]
 use self::uring::UringInner;
-#[cfg(all(windows, feature = "iocp"))]
-use self::iocp::IocpInner;
 
 /// Unpark a runtime of another thread.
 pub(crate) mod unpark {
@@ -233,7 +236,10 @@ impl Inner {
     }
 
     #[allow(unused)]
-    #[cfg(not(any(all(target_os = "linux", feature = "iouring"),all(windows, feature = "iocp"))))]
+    #[cfg(not(any(
+        all(target_os = "linux", feature = "iouring"),
+        all(windows, feature = "iocp")
+    )))]
     fn is_legacy(&self) -> bool {
         true
     }

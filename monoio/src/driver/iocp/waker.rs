@@ -60,11 +60,7 @@ impl EventWaker {
         let buf = 0x1u64.to_ne_bytes();
         unsafe {
             // SAFETY: Writing number to eventfd is thread safe.
-            libc::write(
-                self.raw as c_int,
-                buf.as_ptr().cast(),
-                buf.len() as c_uint,
-            );
+            libc::write(self.raw as c_int, buf.as_ptr().cast(), buf.len() as c_uint);
             Ok(())
         }
     }

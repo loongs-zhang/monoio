@@ -337,10 +337,9 @@ use super::{
     ready::Ready,
     Driver, Inner, CURRENT,
 };
-use crate::{
-    driver::op::{Overlapped, Syscall},
-    utils::slab::Slab,
-};
+#[cfg(all(windows, feature = "iocp"))]
+use crate::driver::op::{Overlapped, Syscall};
+use crate::utils::slab::Slab;
 
 mod lifecycle;
 

@@ -567,14 +567,14 @@ impl Drop for Inner {
         match state {
             #[cfg(all(target_os = "linux", feature = "iouring"))]
             State::Uring(UringState::Init) | State::Uring(UringState::Waiting(..)) => {
-                if super::op::Op::close(fd).is_err() {
-                    let _ = unsafe { std::fs::File::from_raw_fd(fd) };
+                if super::op::Op::close(*fd).is_err() {
+                    let _ = unsafe { std::fs::File::from_raw_fd(*fd) };
                 };
             }
             #[cfg(all(windows, feature = "iocp"))]
             State::Iocp(IocpState::Init) | State::Iocp(IocpState::Waiting(..)) => {
-                if super::op::Op::close(fd).is_err() {
-                    let _ = unsafe { std::fs::File::from_raw_fd(fd) };
+                if super::op::Op::close(fd.socket).is_err() {
+                    let _ = unsafe { std::fs::File::from_raw_fd(fd.socket) };
                 };
             }
             #[cfg(feature = "legacy")]

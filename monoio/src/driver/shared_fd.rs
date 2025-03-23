@@ -574,6 +574,7 @@ impl Drop for Inner {
             #[cfg(all(windows, feature = "iocp"))]
             State::Iocp(IocpState::Init) | State::Iocp(IocpState::Waiting(..)) => {
                 if super::op::Op::close(fd.socket).is_err() {
+                    use std::os::windows::io::FromRawHandle;
                     let _ = unsafe { std::fs::File::from_raw_handle(fd.socket as _) };
                 };
             }

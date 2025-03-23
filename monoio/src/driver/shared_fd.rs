@@ -216,6 +216,8 @@ impl SharedFd {
 
         #[cfg(all(not(feature = "legacy"), target_os = "linux", feature = "iouring"))]
         let state = State::Uring(UringState::Init);
+        #[cfg(all(not(feature = "legacy"), windows, feature = "iocp"))]
+        let state = State::Iocp(IocpState::Init);
 
         #[cfg(all(
             unix,
@@ -270,12 +272,14 @@ impl SharedFd {
                 }
             });
 
-            if cfg!(feature = "iocp") {
-                State::Iocp(IocpState::Init)
-            } else if cfg!(feature = "legacy") {
-                State::Legacy(Some(reg?))
-            } else {
-                unreachable!("you need to enable 'iocp' or 'legacy' feature")
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "iocp")] {
+                    State::Iocp(IocpState::Init)
+                } else if #[cfg(feature = "legacy")] {
+                    State::Legacy(Some(reg?))
+                } else {
+                    unreachable!("you need to enable 'iocp' or 'legacy' feature")
+                }
             }
         };
 

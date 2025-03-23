@@ -29,6 +29,8 @@ struct Inner {
 enum State {
     #[cfg(all(target_os = "linux", feature = "iouring"))]
     Uring(UringState),
+    #[cfg(all(windows, feature = "iocp"))]
+    Iocp(IocpState),
     #[cfg(feature = "legacy")]
     Legacy(Option<usize>),
 }
@@ -132,6 +134,21 @@ enum UringState {
     Legacy(Option<usize>),
 }
 
+#[cfg(all(windows, feature = "iocp"))]
+enum IocpState {
+    /// Initial state
+    Init,
+
+    /// Waiting for all in-flight operation to complete.
+    Waiting(Option<std::task::Waker>),
+
+    /// The FD is closing
+    Closing(super::op::Op<super::op::close::Close>),
+
+    /// The FD is fully closed
+    Closed,
+}
+
 #[cfg(unix)]
 impl AsRawFd for SharedFd {
     fn as_raw_fd(&self) -> RawFd {
@@ -203,7 +220,8 @@ impl SharedFd {
         #[cfg(all(
             unix,
             feature = "legacy",
-            not(all(target_os = "linux", feature = "iouring"))
+            not(all(target_os = "linux", feature = "iouring")),
+            not(all(windows, feature = "iocp"))
         ))]
         let state = {
             let reg = CURRENT.with(|inner| match inner {
@@ -346,6 +364,10 @@ impl SharedFd {
                                 #[cfg(all(target_os = "linux", feature = "iouring"))]
                                 super::Inner::Uring(_) => {
                                     unreachable!("try_unwrap legacy fd with uring runtime")
+                                }
+                                #[cfg(all(windows, feature = "iocp"))]
+                                super::Inner::Iocp(_) => {
+                                    unreachable!("try_unwrap legacy fd with iocp runtime")
                                 }
                                 super::Inner::Legacy(inner) => {
                                     // deregister it from driver(Poll and slab) and close fd
@@ -549,6 +571,10 @@ fn drop_legacy(mut fd: RawFd, idx: Option<usize>) {
                 super::Inner::Uring(_) => {
                     unreachable!("close legacy fd with uring runtime")
                 }
+                #[cfg(all(windows, feature = "iocp"))]
+                super::Inner::Iocp(_) => {
+                    unreachable!("close legacy fd with iocp runtime")
+                }
                 super::Inner::Legacy(inner) => {
                     // deregister it from driver(Poll and slab) and close fd
                     #[cfg(not(windows))]
@@ -579,6 +605,8 @@ fn drop_uring_legacy(fd: RawFd, idx: Option<usize>) {
                 super::Inner::Legacy(_) => {
                     unreachable!("close uring fd with legacy runtime")
                 }
+                #[cfg(all(windows, feature = "iocp"))]
+                super::Inner::Uring(inner) => {}
                 #[cfg(all(target_os = "linux", feature = "iouring"))]
                 super::Inner::Uring(inner) => {
                     // deregister it from driver(Poll and slab) and close fd

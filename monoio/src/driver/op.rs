@@ -140,7 +140,7 @@ impl Drop for MaybeFd {
 
 #[cfg(all(windows, feature = "iocp"))]
 #[allow(non_camel_case_types)]
-pub enum Syscall {
+pub(crate) enum Syscall {
     accept,
     recv,
     WSARecv,
@@ -149,14 +149,14 @@ pub enum Syscall {
 }
 
 #[cfg(all(windows, feature = "iocp"))]
-pub struct Overlapped {
+pub(crate) struct Overlapped {
     /// The base [`OVERLAPPED`].
     pub(crate) base: windows_sys::Win32::System::IO::OVERLAPPED,
     pub(crate) from_fd: windows_sys::Win32::Networking::WinSock::SOCKET,
-    pub user_data: usize,
+    pub(crate) user_data: usize,
     pub(crate) syscall: Syscall,
     pub(crate) socket: windows_sys::Win32::Networking::WinSock::SOCKET,
-    pub result: std::ffi::c_longlong,
+    pub(crate) result: std::ffi::c_longlong,
 }
 
 #[cfg(all(windows, feature = "iocp"))]
@@ -172,7 +172,10 @@ pub(crate) trait OpAble {
         all(windows, feature = "iocp")
     ))]
     const RET_IS_FD: bool = false;
-    #[cfg(all(target_os = "linux", feature = "iouring"))]
+    #[cfg(any(
+        all(target_os = "linux", feature = "iouring"),
+        all(windows, feature = "iocp")
+    ))]
     const SKIP_CANCEL: bool = false;
     #[cfg(all(target_os = "linux", feature = "iouring"))]
     fn uring_op(&mut self) -> io_uring::squeue::Entry;
@@ -288,7 +291,10 @@ where
     }
 }
 
-#[cfg(all(target_os = "linux", feature = "iouring"))]
+#[cfg(any(
+    all(target_os = "linux", feature = "iouring"),
+    all(windows, feature = "iocp")
+))]
 impl<T: OpAble> Drop for Op<T> {
     #[inline]
     fn drop(&mut self) {
@@ -299,14 +305,14 @@ impl<T: OpAble> Drop for Op<T> {
 
 /// Check if current driver is legacy.
 #[allow(unused)]
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 #[inline]
 pub const fn is_legacy() -> bool {
     true
 }
 
 /// Check if current driver is legacy.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 #[inline]
 pub fn is_legacy() -> bool {
     super::CURRENT.with(|inner| inner.is_legacy())

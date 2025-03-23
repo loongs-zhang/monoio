@@ -262,13 +262,21 @@ impl SharedFd {
 
         let state = {
             let reg = CURRENT.with(|inner| match inner {
-                super::Inner::Iocp(_) => State::Iocp(IocpState::Init),
+                #[cfg(feature = "iocp")]
+                super::Inner::Iocp(_) => {}
+                #[cfg(feature = "legacy")]
                 super::Inner::Legacy(inner) => {
                     super::legacy::LegacyDriver::register(inner, &mut fd, RW_INTERESTS)
                 }
             });
 
-            State::Legacy(Some(reg?))
+            if cfg!(feature = "iocp") {
+                State::Iocp(IocpState::Init)
+            } else if cfg!(feature = "legacy") {
+                State::Legacy(Some(reg?))
+            } else {
+                compile_error!("you need to enable 'iocp' or 'legacy' feature")
+            }
         };
 
         #[allow(unreachable_code)]
@@ -309,8 +317,9 @@ impl SharedFd {
     #[allow(unreachable_code, unused)]
     pub(crate) fn new_without_register(fd: RawSocket) -> SharedFd {
         let state = CURRENT.with(|inner| match inner {
-            #[cfg(all(target_os = "linux", feature = "iouring"))]
+            #[cfg(feature = "iocp")]
             super::Inner::Iocp(_) => State::Iocp(IocpState::Init),
+            #[cfg(feature = "legacy")]
             super::Inner::Legacy(_) => State::Legacy(None),
         });
 
@@ -437,6 +446,8 @@ impl SharedFd {
             State::Uring(UringState::Legacy(s)) => *s,
             #[cfg(all(target_os = "linux", feature = "iouring"))]
             State::Uring(_) => None,
+            #[cfg(all(windows, feature = "iocp"))]
+            State::Iocp(_) => None,
             #[cfg(feature = "legacy")]
             State::Legacy(s) => *s,
             #[cfg(all(
@@ -554,6 +565,12 @@ impl Drop for Inner {
         match state {
             #[cfg(all(target_os = "linux", feature = "iouring"))]
             State::Uring(UringState::Init) | State::Uring(UringState::Waiting(..)) => {
+                if super::op::Op::close(fd).is_err() {
+                    let _ = unsafe { std::fs::File::from_raw_fd(fd) };
+                };
+            }
+            #[cfg(all(windows, feature = "iocp"))]
+            State::Iocp(IocpState::Init) | State::Iocp(IocpState::Waiting(..)) => {
                 if super::op::Op::close(fd).is_err() {
                     let _ = unsafe { std::fs::File::from_raw_fd(fd) };
                 };

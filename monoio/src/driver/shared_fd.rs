@@ -261,9 +261,9 @@ impl SharedFd {
         let mut fd = RawFd::new(fd);
 
         let state = {
-            let reg = CURRENT.with(|inner| match inner {
+            let state = CURRENT.with(|inner| match inner {
                 #[cfg(feature = "iocp")]
-                super::Inner::Iocp(_) => {}
+                super::Inner::Iocp(_) => Ok(0),
                 #[cfg(feature = "legacy")]
                 super::Inner::Legacy(inner) => {
                     super::legacy::LegacyDriver::register(inner, &mut fd, RW_INTERESTS)
@@ -275,7 +275,7 @@ impl SharedFd {
             } else if cfg!(feature = "legacy") {
                 State::Legacy(Some(reg?))
             } else {
-                compile_error!("you need to enable 'iocp' or 'legacy' feature")
+                unreachable!("you need to enable 'iocp' or 'legacy' feature")
             }
         };
 

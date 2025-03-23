@@ -350,6 +350,7 @@ pub(crate) const CANCEL_USERDATA: u64 = u64::MAX;
 pub(crate) const MIN_REVERSED_USERDATA: u64 = u64::MAX - 3;
 
 /// Driver with IOCP.
+#[cfg(all(windows, feature = "iocp"))]
 pub struct IocpDriver {
     inner: Rc<UnsafeCell<IocpInner>>,
 
@@ -362,6 +363,7 @@ pub struct IocpDriver {
     thread_id: usize,
 }
 
+#[cfg(all(windows, feature = "iocp"))]
 pub(crate) struct IocpInner {
     /// In-flight operations
     ops: Ops,
@@ -388,6 +390,7 @@ struct Ops {
     slab: Slab<MaybeFdLifecycle>,
 }
 
+#[cfg(all(windows, feature = "iocp"))]
 impl IocpDriver {
     const DEFAULT_ENTRIES: u32 = 1024;
 
@@ -491,6 +494,7 @@ impl IocpDriver {
     }
 }
 
+#[cfg(all(windows, feature = "iocp"))]
 impl Driver for IocpDriver {
     /// Enter the driver context. This enables using iocp types.
     fn with<R>(&self, f: impl FnOnce() -> R) -> R {
@@ -520,6 +524,7 @@ impl Driver for IocpDriver {
     }
 }
 
+#[cfg(all(windows, feature = "iocp"))]
 impl IocpInner {
     fn tick(&mut self, cq: [OVERLAPPED_ENTRY; 1024]) -> std::io::Result<()> {
         for entry in cq {
@@ -602,12 +607,14 @@ impl IocpInner {
     }
 }
 
+#[cfg(all(windows, feature = "iocp"))]
 impl AsRawHandle for IocpDriver {
     fn as_raw_handle(&self) -> RawHandle {
         unsafe { (*self.inner.get()).iocp.as_raw_handle() }
     }
 }
 
+#[cfg(all(windows, feature = "iocp"))]
 impl Drop for IocpDriver {
     fn drop(&mut self) {
         trace!("MONOIO DEBUG[IocpDriver]: drop");
@@ -627,6 +634,7 @@ impl Drop for IocpDriver {
     }
 }
 
+#[cfg(all(windows, feature = "iocp"))]
 impl Drop for IocpInner {
     fn drop(&mut self) {
         // no need to wait for completion, as the kernel will clean up the ring asynchronically.
@@ -657,6 +665,7 @@ impl Ops {
     }
 }
 
+#[cfg(all(windows, feature = "iocp"))]
 #[inline]
 fn resultify(cqe: &Overlapped, entry: &OVERLAPPED_ENTRY) -> std::io::Result<u32> {
     let res = match cqe.syscall {

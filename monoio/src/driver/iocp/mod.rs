@@ -404,10 +404,7 @@ impl IocpDriver {
             iocp: ManuallyDrop::new(CompletionPort::new(0)?),
         }));
 
-        Ok(IocpDriver {
-            inner,
-            timespec: Box::leak(Box::new(Timespec::new())) as *mut Timespec,
-        })
+        Ok(IocpDriver { inner })
     }
 
     #[cfg(feature = "sync")]

@@ -4,7 +4,7 @@ use std::os::unix::io::RawFd;
 
 #[cfg(all(target_os = "linux", feature = "iouring"))]
 use io_uring::{opcode, types};
-#[cfg(all(windows, any(feature = "legacy", feature = "poll-io")))]
+#[cfg(windows)]
 use {std::os::windows::io::RawSocket, windows_sys::Win32::Networking::WinSock::closesocket};
 
 #[cfg(any(feature = "legacy", feature = "poll-io"))]

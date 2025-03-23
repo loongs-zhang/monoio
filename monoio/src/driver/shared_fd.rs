@@ -264,7 +264,7 @@ impl SharedFd {
         let mut fd = RawFd::new(fd);
 
         let state = {
-            let reg = CURRENT.with(|inner| match inner {
+            let reg: io::Result<usize> = CURRENT.with(|inner| match inner {
                 #[cfg(feature = "legacy")]
                 super::Inner::Legacy(inner) => {
                     super::legacy::LegacyDriver::register(inner, &mut fd, RW_INTERESTS)

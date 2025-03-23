@@ -104,7 +104,7 @@ poll-io = ["tokio", "mio"]
 signal = ["ctrlc", "sync"]
 signal-termination = ["signal", "ctrlc/termination"]
 # by default both iouring and legacy are enabled
-default = ["async-cancel", "bytes", "completion_io", "legacy", "macros", "utils"]
+default = ["async-cancel", "bytes", "iouring", "legacy", "macros", "utils"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }

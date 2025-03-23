@@ -265,12 +265,12 @@ impl SharedFd {
 
         let state = {
             let reg = CURRENT.with(|inner| match inner {
-                #[cfg(feature = "iocp")]
-                super::Inner::Iocp(_) => Ok(0),
                 #[cfg(feature = "legacy")]
                 super::Inner::Legacy(inner) => {
                     super::legacy::LegacyDriver::register(inner, &mut fd, RW_INTERESTS)
                 }
+                #[cfg(feature = "iocp")]
+                super::Inner::Iocp(_) => Ok(0),
             });
 
             cfg_if::cfg_if! {

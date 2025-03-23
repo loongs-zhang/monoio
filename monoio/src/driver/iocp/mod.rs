@@ -334,7 +334,6 @@ use windows_sys::Win32::Networking::WinSock::{
 
 use super::{
     op::{CompletionMeta, Op, OpAble},
-    ready::Ready,
     Driver, Inner, CURRENT,
 };
 #[cfg(all(windows, feature = "iocp"))]

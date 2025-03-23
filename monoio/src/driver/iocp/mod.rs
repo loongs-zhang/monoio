@@ -326,17 +326,23 @@ use std::{
 };
 
 use lifecycle::MaybeFdLifecycle;
+#[cfg(feature = "sync")]
+pub(crate) use waker::UnparkHandle;
+use windows_sys::Win32::Networking::WinSock::{
+    setsockopt, SOCKET, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, WSAENETDOWN,
+};
 
 use super::{
     op::{CompletionMeta, Op, OpAble},
     ready::Ready,
     Driver, Inner, CURRENT,
 };
-use crate::utils::slab::Slab;
+use crate::{
+    driver::op::{Overlapped, Syscall},
+    utils::slab::Slab,
+};
 
 mod lifecycle;
-#[cfg(feature = "sync")]
-pub(crate) use waker::UnparkHandle;
 
 #[allow(unused)]
 pub(crate) const CANCEL_USERDATA: u64 = u64::MAX;
@@ -520,10 +526,10 @@ impl IocpInner {
             let mut cqe = unsafe { *Box::from_raw(entry.lpOverlapped.cast::<Overlapped>()) };
             let index = cqe.user_data;
             match index {
-                _ if index >= MIN_REVERSED_USERDATA => (),
+                _ if index >= MIN_REVERSED_USERDATA as usize => (),
                 // # Safety
                 // Here we can make sure the result is valid.
-                _ => unsafe { self.ops.complete(index as _, resultify(&cqe), 0) },
+                _ => unsafe { self.ops.complete(index as _, resultify(&cqe, &entry), 0) },
             }
         }
         Ok(())
@@ -581,44 +587,18 @@ impl IocpInner {
         data: &mut Option<T>,
         _skip_cancel: bool,
     ) {
-        let inner = unsafe { &mut *this.get() };
-        if index == usize::MAX {
-            // already finished
-            return;
-        }
-        if let Some(lifecycle) = inner.ops.slab.get(index) {
-            let _must_finished = lifecycle.drop_op(data);
-            #[cfg(feature = "async-cancel")]
-            if !_must_finished && !_skip_cancel {
-                unsafe {
-                    let cancel = opcode::AsyncCancel::new(index as u64)
-                        .build()
-                        .user_data(u64::MAX);
-
-                    // Try push cancel, if failed, will submit and re-push.
-                    if inner.iocp.submission().push(&cancel).is_err() {
-                        let _ = inner.iocp.submission().push(&cancel);
-                    }
-                }
-            }
-        }
+        todo!()
     }
 
     pub(crate) unsafe fn cancel_op(this: &Rc<UnsafeCell<IocpInner>>, index: usize) {
-        let inner = &mut *this.get();
-        let cancel = opcode::AsyncCancel::new(index as u64)
-            .build()
-            .user_data(u64::MAX);
-        if inner.iocp.submission().push(&cancel).is_err() {
-            let _ = inner.iocp.submission().push(&cancel);
-        }
+        todo!()
     }
 
     #[cfg(feature = "sync")]
-    pub(crate) fn unpark(this: &Rc<UnsafeCell<IocpInner>>) -> waker::UnparkHandle {
+    pub(crate) fn unpark(this: &Rc<UnsafeCell<IocpInner>>) -> UnparkHandle {
         let inner = unsafe { &*this.get() };
-        let weak = std::sync::Arc::downgrade(&inner.shared_waker);
-        waker::UnparkHandle(weak)
+        let weak = Arc::downgrade(&inner.shared_waker);
+        UnparkHandle(weak)
     }
 }
 
@@ -678,16 +658,18 @@ impl Ops {
 }
 
 #[inline]
-fn resultify(cqe: &Overlapped) -> std::io::Result<u32> {
+fn resultify(cqe: &Overlapped, entry: &OVERLAPPED_ENTRY) -> std::io::Result<u32> {
     let res = match cqe.syscall {
         Syscall::accept => {
-            if setsockopt(
-                cqe.socket,
-                SOL_SOCKET,
-                SO_UPDATE_ACCEPT_CONTEXT,
-                std::ptr::from_ref(&cqe.from_fd).cast(),
-                c_int::try_from(size_of::<SOCKET>()).expect("overflow"),
-            ) == 0
+            if unsafe {
+                setsockopt(
+                    cqe.socket,
+                    SOL_SOCKET,
+                    SO_UPDATE_ACCEPT_CONTEXT,
+                    std::ptr::from_ref(&cqe.from_fd).cast(),
+                    std::ffi::c_int::try_from(size_of::<SOCKET>()).expect("overflow"),
+                )
+            } == 0
             {
                 cqe.socket.try_into().expect("result overflow")
             } else {
@@ -695,7 +677,7 @@ fn resultify(cqe: &Overlapped) -> std::io::Result<u32> {
             }
         }
         Syscall::recv | Syscall::WSARecv | Syscall::send | Syscall::WSASend => {
-            cqe.base.dwNumberOfBytesTransferred.into()
+            entry.dwNumberOfBytesTransferred.into()
         }
         _ => panic!("unsupported"),
     };

@@ -150,11 +150,11 @@ pub enum Syscall {
 #[cfg(all(windows, feature = "iocp"))]
 pub struct Overlapped {
     /// The base [`OVERLAPPED`].
-    base: windows_sys::Win32::System::IO::OVERLAPPED,
-    from_fd: windows_sys::Win32::Networking::WinSock::SOCKET,
+    pub(crate) base: windows_sys::Win32::System::IO::OVERLAPPED,
+    pub(crate) from_fd: windows_sys::Win32::Networking::WinSock::SOCKET,
     pub user_data: usize,
-    syscall: Syscall,
-    socket: windows_sys::Win32::Networking::WinSock::SOCKET,
+    pub(crate) syscall: Syscall,
+    pub(crate) socket: windows_sys::Win32::Networking::WinSock::SOCKET,
     pub result: std::ffi::c_longlong,
 }
 

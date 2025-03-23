@@ -261,7 +261,7 @@ impl SharedFd {
         let mut fd = RawFd::new(fd);
 
         let state = {
-            let state = CURRENT.with(|inner| match inner {
+            let reg = CURRENT.with(|inner| match inner {
                 #[cfg(feature = "iocp")]
                 super::Inner::Iocp(_) => Ok(0),
                 #[cfg(feature = "legacy")]

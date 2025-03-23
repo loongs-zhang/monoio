@@ -174,7 +174,11 @@ pub(crate) trait OpAble {
     fn uring_op(&mut self) -> io_uring::squeue::Entry;
 
     #[cfg(all(windows, feature = "iocp"))]
-    fn iocp_op(&mut self, iocp: &CompletionPort, user_data: usize) -> io::Result<()> {
+    fn iocp_op(
+        &mut self,
+        iocp: &crate::driver::iocp::CompletionPort,
+        user_data: usize,
+    ) -> io::Result<()> {
         Err(io::Error::other("iocp is not implemented yet"))
     }
 

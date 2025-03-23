@@ -75,7 +75,15 @@ impl OpAble for Accept {
     }
 
     #[cfg(all(windows, feature = "iocp"))]
-    fn iocp_op(&mut self, iocp: &CompletionPort, user_data: usize) -> io::Result<()> {
+    fn iocp_op(
+        &mut self,
+        iocp: &crate::driver::iocp::CompletionPort,
+        user_data: usize,
+    ) -> io::Result<()> {
+        use windows_sys::Win32::{
+            Foundation::{FALSE, HANDLE},
+            Networking::WinSock::{AcceptEx, WSAGetLastError, SOCKADDR_IN, WSA_IO_PENDING},
+        };
         let fd = self.fd.as_raw_socket() as _;
         unsafe {
             let mut sock_info: WSAPROTOCOL_INFOW = std::mem::zeroed();

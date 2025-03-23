@@ -139,6 +139,7 @@ impl Drop for MaybeFd {
 }
 
 #[cfg(all(windows, feature = "iocp"))]
+#[allow(non_camel_case_types)]
 pub enum Syscall {
     accept,
     recv,
@@ -176,8 +177,8 @@ pub(crate) trait OpAble {
     #[cfg(all(windows, feature = "iocp"))]
     fn iocp_op(
         &mut self,
-        iocp: &crate::driver::iocp::CompletionPort,
-        user_data: usize,
+        _iocp: &crate::driver::iocp::CompletionPort,
+        _user_data: usize,
     ) -> io::Result<()> {
         Err(io::Error::other("iocp is not implemented yet"))
     }

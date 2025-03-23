@@ -391,7 +391,7 @@ impl SharedFd {
     }
 
     #[cfg(windows)]
-    /// Try unwrap Rc, then deregister if registered and return rawfd.
+    /// Try to unwrap Rc, then deregister if registered and return rawfd.
     /// Note: this action will consume self and return rawfd without closing it.
     pub(crate) fn try_unwrap(self) -> Result<RawSocket, Self> {
         match Rc::try_unwrap(self.inner) {
@@ -404,6 +404,8 @@ impl SharedFd {
                     if CURRENT.is_set() {
                         CURRENT.with(|inner| {
                             match inner {
+                                #[cfg(all(windows, feature = "iocp"))]
+                                super::Inner::Iocp(_) => {}
                                 super::Inner::Legacy(inner) => {
                                     // deregister it from driver(Poll and slab) and close fd
                                     if let Some(idx) = idx {
@@ -606,7 +608,7 @@ fn drop_uring_legacy(fd: RawFd, idx: Option<usize>) {
                     unreachable!("close uring fd with legacy runtime")
                 }
                 #[cfg(all(windows, feature = "iocp"))]
-                super::Inner::Uring(inner) => {}
+                super::Inner::Iocp(inner) => {}
                 #[cfg(all(target_os = "linux", feature = "iouring"))]
                 super::Inner::Uring(inner) => {
                     // deregister it from driver(Poll and slab) and close fd

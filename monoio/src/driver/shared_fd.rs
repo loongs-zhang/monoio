@@ -408,8 +408,8 @@ impl SharedFd {
     /// Note: this action will consume self and return rawfd without closing it.
     pub(crate) fn try_unwrap(self) -> Result<RawSocket, Self> {
         match Rc::try_unwrap(self.inner) {
-            Ok(_inner) => {
-                let mut fd = &mut _inner.fd;
+            Ok(mut _inner) => {
+                let fd = &mut _inner.fd;
                 let state = unsafe { &*_inner.state.get() };
 
                 match state {
@@ -561,7 +561,7 @@ impl Inner {
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        let fd = self.fd;
+        let fd = &mut self.fd;
         let state = unsafe { &mut *self.state.get() };
         #[allow(unreachable_patterns)]
         match state {
@@ -588,7 +588,7 @@ impl Drop for Inner {
 
 #[allow(unused_mut)]
 #[cfg(feature = "legacy")]
-fn drop_legacy(mut fd: RawFd, idx: Option<usize>) {
+fn drop_legacy(fd: &mut RawFd, idx: Option<usize>) {
     if CURRENT.is_set() {
         CURRENT.with(|inner| {
             #[cfg(any(all(target_os = "linux", feature = "iouring"), feature = "legacy"))]
@@ -605,19 +605,19 @@ fn drop_legacy(mut fd: RawFd, idx: Option<usize>) {
                     // deregister it from driver(Poll and slab) and close fd
                     #[cfg(not(windows))]
                     if let Some(idx) = idx {
-                        let mut source = mio::unix::SourceFd(&fd);
+                        let mut source = mio::unix::SourceFd(fd);
                         let _ = super::legacy::LegacyDriver::deregister(inner, idx, &mut source);
                     }
                     #[cfg(windows)]
                     if let Some(idx) = idx {
-                        let _ = super::legacy::LegacyDriver::deregister(inner, idx, &mut fd);
+                        let _ = super::legacy::LegacyDriver::deregister(inner, idx, fd);
                     }
                 }
             }
         })
     }
     #[cfg(all(unix, feature = "legacy"))]
-    let _ = unsafe { std::fs::File::from_raw_fd(fd) };
+    let _ = unsafe { std::fs::File::from_raw_fd(*fd) };
     #[cfg(all(windows, feature = "legacy"))]
     let _ = unsafe { OwnedSocket::from_raw_socket(fd.socket) };
 }

@@ -524,7 +524,7 @@ impl Driver for IocpDriver {
 impl IocpInner {
     fn tick(&mut self, cq: [OVERLAPPED_ENTRY; 1024]) -> std::io::Result<()> {
         for entry in cq {
-            let mut cqe = unsafe { *Box::from_raw(entry.lpOverlapped.cast::<Overlapped>()) };
+            let cqe = unsafe { *Box::from_raw(entry.lpOverlapped.cast::<Overlapped>()) };
             let index = cqe.user_data;
             match index {
                 _ if index >= MIN_REVERSED_USERDATA as usize => (),

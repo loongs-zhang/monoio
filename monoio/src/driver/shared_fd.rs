@@ -382,10 +382,6 @@ impl SharedFd {
                                 super::Inner::Uring(_) => {
                                     unreachable!("try_unwrap legacy fd with uring runtime")
                                 }
-                                #[cfg(all(windows, feature = "iocp"))]
-                                super::Inner::Iocp(_) => {
-                                    unreachable!("try_unwrap legacy fd with iocp runtime")
-                                }
                                 super::Inner::Legacy(inner) => {
                                     // deregister it from driver(Poll and slab) and close fd
                                     if let Some(idx) = idx {
@@ -422,6 +418,8 @@ impl SharedFd {
                         if CURRENT.is_set() {
                             CURRENT.with(|inner| {
                                 match inner {
+                                    #[cfg(feature = "iocp")]
+                                    super::Inner::Iocp(_) => {}
                                     super::Inner::Legacy(inner) => {
                                         // deregister it from driver(Poll and slab) and close fd
                                         if let Some(idx) = idx {
@@ -561,7 +559,6 @@ impl Inner {
     }
 }
 
-#[cfg(unix)]
 impl Drop for Inner {
     fn drop(&mut self) {
         let fd = self.fd;

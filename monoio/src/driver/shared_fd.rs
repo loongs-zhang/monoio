@@ -409,7 +409,7 @@ impl SharedFd {
     pub(crate) fn try_unwrap(self) -> Result<RawSocket, Self> {
         match Rc::try_unwrap(self.inner) {
             Ok(_inner) => {
-                let mut fd = _inner.fd;
+                let mut fd = &mut _inner.fd;
                 let state = unsafe { &*_inner.state.get() };
 
                 match state {
@@ -424,7 +424,7 @@ impl SharedFd {
                                         // deregister it from driver(Poll and slab) and close fd
                                         if let Some(idx) = idx {
                                             let _ = super::legacy::LegacyDriver::deregister(
-                                                inner, *idx, &mut fd,
+                                                inner, *idx, fd,
                                             );
                                         }
                                     }

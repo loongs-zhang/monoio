@@ -574,13 +574,13 @@ impl Drop for Inner {
             #[cfg(all(windows, feature = "iocp"))]
             State::Iocp(IocpState::Init) | State::Iocp(IocpState::Waiting(..)) => {
                 if super::op::Op::close(fd.socket).is_err() {
-                    let _ = unsafe { std::fs::File::from_raw_fd(fd.socket) };
+                    let _ = unsafe { std::fs::File::from_raw_handle(fd.socket as _) };
                 };
             }
             #[cfg(feature = "legacy")]
             State::Legacy(idx) => drop_legacy(fd, *idx),
             #[cfg(all(target_os = "linux", feature = "iouring", feature = "poll-io"))]
-            State::Uring(UringState::Legacy(idx)) => drop_uring_legacy(fd, *idx),
+            State::Uring(UringState::Legacy(idx)) => drop_uring_legacy(*fd, *idx),
             _ => {}
         }
     }

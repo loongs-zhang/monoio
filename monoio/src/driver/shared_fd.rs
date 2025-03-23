@@ -262,6 +262,7 @@ impl SharedFd {
 
         let state = {
             let reg = CURRENT.with(|inner| match inner {
+                super::Inner::Iocp(_) => State::Iocp(IocpState::Init),
                 super::Inner::Legacy(inner) => {
                     super::legacy::LegacyDriver::register(inner, &mut fd, RW_INTERESTS)
                 }
@@ -308,6 +309,8 @@ impl SharedFd {
     #[allow(unreachable_code, unused)]
     pub(crate) fn new_without_register(fd: RawSocket) -> SharedFd {
         let state = CURRENT.with(|inner| match inner {
+            #[cfg(all(target_os = "linux", feature = "iouring"))]
+            super::Inner::Iocp(_) => State::Iocp(IocpState::Init),
             super::Inner::Legacy(_) => State::Legacy(None),
         });
 
@@ -399,24 +402,26 @@ impl SharedFd {
                 let mut fd = _inner.fd;
                 let state = unsafe { &*_inner.state.get() };
 
-                #[allow(irrefutable_let_patterns)]
-                if let State::Legacy(idx) = state {
-                    if CURRENT.is_set() {
-                        CURRENT.with(|inner| {
-                            match inner {
-                                #[cfg(all(windows, feature = "iocp"))]
-                                super::Inner::Iocp(_) => {}
-                                super::Inner::Legacy(inner) => {
-                                    // deregister it from driver(Poll and slab) and close fd
-                                    if let Some(idx) = idx {
-                                        let _ = super::legacy::LegacyDriver::deregister(
-                                            inner, *idx, &mut fd,
-                                        );
+                match state {
+                    #[cfg(feature = "legacy")]
+                    State::Legacy(idx) => {
+                        if CURRENT.is_set() {
+                            CURRENT.with(|inner| {
+                                match inner {
+                                    super::Inner::Legacy(inner) => {
+                                        // deregister it from driver(Poll and slab) and close fd
+                                        if let Some(idx) = idx {
+                                            let _ = super::legacy::LegacyDriver::deregister(
+                                                inner, *idx, &mut fd,
+                                            );
+                                        }
                                     }
                                 }
-                            }
-                        })
+                            })
+                        }
                     }
+                    #[cfg(feature = "iocp")]
+                    super::Inner::Iocp(_) => {}
                 }
                 Ok(fd.socket)
             }

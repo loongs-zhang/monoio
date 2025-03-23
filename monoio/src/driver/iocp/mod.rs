@@ -682,7 +682,7 @@ fn resultify(cqe: &Overlapped, entry: &OVERLAPPED_ENTRY) -> std::io::Result<u32>
             }
         }
         Syscall::recv | Syscall::WSARecv | Syscall::send | Syscall::WSASend => {
-            entry.dwNumberOfBytesTransferred
+            entry.dwNumberOfBytesTransferred.try_into().unwrap()
         }
         _ => panic!("unsupported"),
     };

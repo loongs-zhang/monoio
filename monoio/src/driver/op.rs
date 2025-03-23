@@ -167,7 +167,10 @@ impl Default for Overlapped {
 }
 
 pub(crate) trait OpAble {
-    #[cfg(all(target_os = "linux", feature = "iouring"))]
+    #[cfg(any(
+        all(target_os = "linux", feature = "iouring"),
+        all(windows, feature = "iocp")
+    ))]
     const RET_IS_FD: bool = false;
     #[cfg(all(target_os = "linux", feature = "iouring"))]
     const SKIP_CANCEL: bool = false;

@@ -110,7 +110,7 @@ impl OpAble for Accept {
                 WSA_FLAG_OVERLAPPED,
             );
             if INVALID_SOCKET == socket {
-                return Err(Error::other(("add accept operation failed")));
+                return Err(Error::other("add accept operation failed"));
             }
             let overlapped: &'static mut Overlapped = Box::leak(Box::default());
             overlapped.from_fd = fd;

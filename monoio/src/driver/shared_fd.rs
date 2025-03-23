@@ -256,6 +256,7 @@ impl SharedFd {
         })
     }
 
+    #[allow(unused_variables)]
     #[cfg(windows)]
     pub(crate) fn new<const FORCE_LEGACY: bool>(fd: RawSocket) -> io::Result<SharedFd> {
         const RW_INTERESTS: mio::Interest = mio::Interest::READABLE.add(mio::Interest::WRITABLE);
@@ -434,7 +435,7 @@ impl SharedFd {
                         }
                     }
                     #[cfg(feature = "iocp")]
-                    super::Inner::Iocp(_) => {}
+                    State::Iocp(_) => {}
                 }
                 Ok(fd.socket)
             }

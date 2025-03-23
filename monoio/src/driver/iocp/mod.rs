@@ -582,6 +582,7 @@ impl IocpInner {
         lifecycle.poll_op(cx)
     }
 
+    #[allow(unused_variables)]
     pub(crate) fn drop_op<T: 'static>(
         this: &Rc<UnsafeCell<IocpInner>>,
         index: usize,
@@ -591,6 +592,7 @@ impl IocpInner {
         todo!()
     }
 
+    #[allow(unused_variables)]
     pub(crate) unsafe fn cancel_op(this: &Rc<UnsafeCell<IocpInner>>, index: usize) {
         todo!()
     }
@@ -684,7 +686,6 @@ fn resultify(cqe: &Overlapped, entry: &OVERLAPPED_ENTRY) -> std::io::Result<u32>
         Syscall::recv | Syscall::WSARecv | Syscall::send | Syscall::WSASend => {
             entry.dwNumberOfBytesTransferred.try_into().unwrap()
         }
-        _ => panic!("unsupported"),
     };
 
     if res >= 0 {

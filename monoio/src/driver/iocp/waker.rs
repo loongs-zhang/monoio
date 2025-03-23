@@ -35,7 +35,7 @@ use crate::driver::unpark::Unpark;
 
 pub(crate) struct EventWaker {
     // RawFd
-    raw: RawHandle,
+    raw: usize,
     // File hold the ownership of fd, only useful when drop
     _file: std::fs::File,
     // Atomic awake status
@@ -45,7 +45,7 @@ pub(crate) struct EventWaker {
 impl EventWaker {
     pub(crate) fn new(file: std::fs::File) -> Self {
         Self {
-            raw: file.as_raw_handle(),
+            raw: file.as_raw_handle() as usize,
             _file: file,
             awake: std::sync::atomic::AtomicBool::new(true),
         }
@@ -61,7 +61,7 @@ impl EventWaker {
         unsafe {
             // SAFETY: Writing number to eventfd is thread safe.
             libc::write(
-                self.raw as usize as c_int,
+                self.raw as c_int,
                 buf.as_ptr().cast(),
                 buf.len() as c_uint,
             );
@@ -72,7 +72,7 @@ impl EventWaker {
 
 impl AsRawHandle for EventWaker {
     fn as_raw_handle(&self) -> RawHandle {
-        self.raw
+        self.raw as RawHandle
     }
 }
 
